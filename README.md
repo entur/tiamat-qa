@@ -28,6 +28,7 @@ No build step, no server, no dependencies to install. Open the HTML file in any 
 | Validation colouring | Green = approved, Red = disapproved (see [Validation rules](#validation-rules)) |
 | Stop place popup | Click any stop marker for name, NSR ID, type label, and reason if disapproved |
 | Errors-only filter | Toggle to hide GOSPs where all members are approved |
+| PoG filter | Dropdown to show only GOSPs matching a specific PurposeOfGrouping; populated automatically after load |
 | NSR deep link | Every GOSP in the sidebar has an **NSR ↗** button that opens it in the NSR editor |
 | Progressive loading | Stops are fetched GOSP by GOSP so the UI is usable immediately |
 | Read-only | No write operations — safe to use against production |
@@ -60,7 +61,8 @@ Everything you need to adapt the tool is in two objects at the top of the `<scri
 const CONFIG = {
   apiBase:    'https://api.entur.io/stop-places/v1/read',
   clientName: 'entur-ror-johan-gosp-viewer',
-  nsrGospUrl: 'https://stoppested.entur.org/group/{id}',
+  nsrGospUrl:   'https://stoppested.entur.org/group/{id}',
+  nsrLinkLabel: 'NSR ↗',
 };
 ```
 
@@ -69,6 +71,7 @@ const CONFIG = {
 | `apiBase` | Base URL for the Entur NSR REST API. Change to point at a test environment. |
 | `clientName` | Value sent in the `ET-Client-Name` request header (required by Entur). |
 | `nsrGospUrl` | Deep-link template for the NSR editor. `{id}` is replaced with the GOSP id at runtime. |
+| `nsrLinkLabel` | Text shown on the link button next to each GOSP in the sidebar. |
 
 ### `THEME` — colours
 
