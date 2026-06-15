@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GOSP QA Viewer — Entur</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-size: 14px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 18px;
+      background: #1c1c2e;
+      color: #fff;
+      flex-shrink: 0;
+      border-bottom: 2px solid #e63946;
+    }
+    #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
+    #header h1 span { color: #e63946; }
+
+    #btn-refresh {
+      padding: 7px 18px;
+      background: #e63946;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    #btn-refresh:hover:not(:disabled) { background: #c1121f; }
+    #btn-refresh:disabled { background: #555; cursor: not-allowed; }
+
+    #version {
+      font-size: 11px;
+      color: #666;
+      background: #2e2e42;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+
+    #status {
+      font-size: 13px;
+      color: #bbb;
+      margin-left: auto;
+      max-width: 420px;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Layout ── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 360px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #d0d0d0;
+      background: #f5f5f7;
+      overflow: hidden;
+    }
+
+    #sidebar-top {
+      padding: 10px 12px;
+      border-bottom: 1px solid #d0d0d0;
+      background: #e9e9ec;
+      flex-shrink: 0;
+    }
+    #sidebar-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    #sidebar-top-row span { font-size: 13px; font-weight: 600; color: #444; }
+
+    #search {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+    }
+    #search:focus { outline: 1px solid #6f42c1; }
+
+    #gosp-list { flex: 1; overflow-y: auto; }
+
+    .gosp-item {
+      padding: 11px 12px;
+      border-bottom: 1px solid #e0e0e0;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .gosp-item:hover { background: #eaeaee; }
+    .gosp-item.active {
+      background: #ede7f6;
+      border-left: 4px solid #6f42c1;
+      padding-left: 8px;
+    }
+
+    .gi-name    { font-size: 15px; font-weight: 600; color: #1a1a2e; }
+    .gi-id      { font-size: 11px; color: #888; font-family: monospace; margin-top: 2px; }
+    .gi-purpose { font-size: 12px; color: #555; margin-top: 3px; }
+
+    .gi-stats { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+
+    .badge {
+      font-size: 12px;
+      padding: 3px 9px;
+      border-radius: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .b-total   { background: #e0e0e0; color: #444; }
+    .b-ok      { background: #d4edda; color: #155724; }
+    .b-bad     { background: #f8d7da; color: #721c24; }
+    .b-loading { background: #fff3cd; color: #856404; }
+
+    /* ── Map ── */
+    #map { flex: 1; }
+
+    /* ── Leaflet popup ── */
+    .lp { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; min-width: 240px; }
+    .lp-title { font-weight: 700; font-size: 14px; margin-bottom: 5px; }
+    .lp-id    { font-family: monospace; font-size: 12px; color: #666; }
+    .lp-row   { font-size: 13px; margin-top: 5px; color: #333; }
+    .lp-ok    { color: #198754; font-weight: 600; }
+    .lp-bad   { color: #dc3545; font-weight: 600; }
+    .lp-gosp  { color: #6f42c1; font-weight: 600; }
+
+    .lp-pill {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      margin-top: 4px;
+    }
+    .pill-child   { background: #fdecea; color: #b71c1c; }
+    .pill-expired { background: #fff3cd; color: #856404; }
+    .pill-parent  { background: #e8f5e9; color: #1b5e20; }
+    .pill-mono    { background: #e3f2fd; color: #0d47a1; }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>GOSP QA <span>Viewer</span></h1>
+  <button id="btn-refresh">Load GOSPs</button>
+  <span id="version">v0.5</span>
+  <span id="status">Not loaded</span>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div id="sidebar-top">
+      <div id="sidebar-top-row">
+        <span>Group of Stop Places</span>
+        <span id="gosp-count" style="color:#6f42c1">—</span>
+      </div>
+      <input id="search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>
+    </div>
+    <div id="gosp-list"></div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+'use strict';
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const BASE    = 'https://api.entur.io/stop-places/v1/read';
+const HEADERS = { 'ET-Client-Name': 'entur-ror-johan-gosp-viewer' };
+const TODAY   = new Date();
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+const map = L.map('map').setView([64.5, 16.5], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 19,
+}).addTo(map);
+
+// Two layer groups: GOSP pins always visible, member detail only for selected GOSP
+const gospLayer   = L.layerGroup().addTo(map);
+const detailLayer = L.layerGroup().addTo(map);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let gosps       = [];
+let stopCache   = {};
+let activeGosp  = null;
+const gospMarkers = new Map();  // gosp.id → L.Marker
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+function gospIcon(active) {
+  const s = active ? 22 : 16;
+  const bg     = active ? '#6f42c1' : '#9b6fe0';
+  const border = active ? '3px solid #fff' : '2px solid rgba(255,255,255,0.8)';
+  const shadow = active ? '0 2px 8px rgba(0,0,0,0.55)' : '0 1px 4px rgba(0,0,0,0.35)';
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:${s}px;height:${s}px;border-radius:50%;background:${bg};border:${border};box-shadow:${shadow};"></div>`,
+    iconSize:   [s, s],
+    iconAnchor: [s / 2, s / 2],
+    zIndexOffset: active ? 1000 : 0,
+  });
+}
+
+function stopIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2.5px solid rgba(0,0,0,0.4);"></div>`,
+    iconSize:   [14, 14],
+    iconAnchor: [7, 7],
+  });
+}
+
+// ── JSON helpers ──────────────────────────────────────────────────────────────
+function jsonCoord(loc) {
+  const lat = loc?.latitude;
+  const lng = loc?.longitude;
+  if (lat == null || lng == null) return null;
+  return [lat, lng];
+}
+
+function jsonKeyValue(keyList, key) {
+  const kvs = keyList?.keyValue;
+  if (!Array.isArray(kvs)) return null;
+  return kvs.find(kv => kv.key === key)?.value ?? null;
+}
+
+// ── Parse GOSP list ───────────────────────────────────────────────────────────
+function parseGosps(data) {
+  if (!Array.isArray(data)) return [];
+  return data.map(g => {
+    const refs = g.members?.stopPlaceRef;
+    const memberRefs = Array.isArray(refs)
+      ? refs.map(r => r.ref).filter(Boolean)
+      : (refs?.ref ? [refs.ref] : []);
+    return {
+      id:         g.id,
+      name:       g.name?.value ?? g.id,
+      purpose:    g.purposeOfGroupingRef?.ref ?? '—',
+      centroid:   jsonCoord(g.centroid?.location),
+      memberRefs,
+      members:    null,
+    };
+  });
+}
+
+// ── Parse single stop ─────────────────────────────────────────────────────────
+function parseStop(data, id) {
+  if (!data) return null;
+  const vb        = Array.isArray(data.validBetween) ? data.validBetween[0] : data.validBetween;
+  const toDateRaw = vb?.toDate ?? null;
+  const toDate    = toDateRaw ? new Date(toDateRaw) : null;
+  return {
+    id,
+    name:      data.name?.value ?? id,
+    coord:     jsonCoord(data.centroid?.location),
+    parentRef: data.parentSiteRef?.ref ?? null,
+    isParent:  jsonKeyValue(data.keyList, 'IS_PARENT_STOP_PLACE') === 'true',
+    expired:   toDate !== null && toDate < TODAY,
+    toDateRaw,
+  };
+}
+
+// ── Validation ────────────────────────────────────────────────────────────────
+function validate(stop) {
+  const reasons = [];
+  if (stop.expired)                     reasons.push(`Expired ${stop.toDateRaw?.slice(0, 10)}`);
+  if (!stop.isParent && stop.parentRef) reasons.push(`Child of ${stop.parentRef}`);
+  return { ok: reasons.length === 0, reasons };
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────────
+async function fetchJson(url) {
+  const res = await fetch(url, { headers: HEADERS });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function fetchStop(id) {
+  if (stopCache[id]) return stopCache[id];
+  const data = await fetchJson(`${BASE}/stop-places/${encodeURIComponent(id)}`);
+  const stop = parseStop(data, id);
+  if (stop) stopCache[id] = stop;
+  return stop;
+}
+
+// ── Map: render all GOSP pins ─────────────────────────────────────────────────
+function renderGospPins() {
+  gospLayer.clearLayers();
+  gospMarkers.clear();
+  gosps.forEach(gosp => {
+    if (!gosp.centroid) return;
+    const m = L.marker(gosp.centroid, { icon: gospIcon(false) })
+      .addTo(gospLayer)
+      .bindTooltip(gosp.name, { direction: 'top', offset: [0, -6] });
+    m.on('click', () => selectGosp(gosp));
+    gospMarkers.set(gosp.id, m);
+  });
+}
+
+// ── Map: render member detail for selected GOSP ───────────────────────────────
+function renderDetail(gosp) {
+  detailLayer.clearLayers();
+  const gll    = gosp.centroid;
+  const bounds = gll ? [gll] : [];
+
+  (gosp.members || []).forEach(stop => {
+    if (!stop?.coord) return;
+    bounds.push(stop.coord);
+
+    const { ok, reasons } = validate(stop);
+    const color = ok ? '#198754' : '#dc3545';
+
+    if (gll) {
+      L.polyline([gll, stop.coord], {
+        color, weight: 2.5, opacity: 0.55, dashArray: '7 5',
+      }).addTo(detailLayer);
+    }
+
+    const typeLabel = stop.isParent
+      ? '<span class="lp-pill pill-parent">Multimodal parent</span>'
+      : stop.parentRef
+        ? '<span class="lp-pill pill-child">Monomodal child</span>'
+        : '<span class="lp-pill pill-mono">Monomodal standalone</span>';
+
+    const statusHtml = ok
+      ? `<div class="lp-row lp-ok">✓ Approved member</div>${typeLabel}`
+      : `<div class="lp-row lp-bad">✗ Disapproved member</div>${typeLabel}` +
+        reasons.map(r => `<span class="lp-pill pill-expired">${r}</span>`).join('');
+
+    L.marker(stop.coord, { icon: stopIcon(color) })
+      .addTo(detailLayer)
+      .bindPopup(`
+        <div class="lp">
+          <div class="lp-title">${escHtml(stop.name)}</div>
+          <div class="lp-id">${stop.id}</div>
+          ${statusHtml}
+        </div>`);
+  });
+
+  if (bounds.length > 1)      map.fitBounds(bounds, { padding: [55, 55], maxZoom: 14 });
+  else if (bounds.length === 1) map.setView(bounds[0], 13);
+}
+
+// ── Select GOSP ───────────────────────────────────────────────────────────────
+function selectGosp(gosp) {
+  // Reset previous active marker
+  if (activeGosp) {
+    const prev = gospMarkers.get(activeGosp.id);
+    if (prev) prev.setIcon(gospIcon(false));
+  }
+  activeGosp = gosp;
+
+  // Activate new marker
+  const m = gospMarkers.get(gosp.id);
+  if (m) { m.setIcon(gospIcon(true)); m.setZIndexOffset(1000); }
+
+  // Highlight sidebar item and scroll to it
+  document.querySelectorAll('.gosp-item.active').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.gosp-item[data-id="${CSS.escape(gosp.id)}"]`);
+  if (item) {
+    item.classList.add('active');
+    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Show member detail (members may still be loading — renderDetail handles null)
+  renderDetail(gosp);
+
+  if (gosp.members) {
+    const ok  = gosp.members.filter(Boolean).filter(s => validate(s).ok).length;
+    const bad = gosp.members.filter(Boolean).length - ok;
+    setStatus(`"${gosp.name}" — ${ok} approved, ${bad} disapproved`);
+  } else {
+    setStatus(`"${gosp.name}" — stops loading…`);
+  }
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+function statBadges(gosp) {
+  if (!gosp.members) {
+    return `<span class="badge b-loading">Loading…</span>`;
+  }
+  const loaded  = gosp.members.filter(Boolean);
+  const ok      = loaded.filter(s => validate(s).ok).length;
+  const bad     = loaded.length - ok;
+  const missing = gosp.memberRefs.length - loaded.length;
+  let html = `<span class="badge b-total">${gosp.memberRefs.length} stops</span>`;
+  if (ok  > 0)      html += `<span class="badge b-ok">✓ ${ok}</span>`;
+  if (bad > 0)      html += `<span class="badge b-bad">✗ ${bad}</span>`;
+  if (missing > 0)  html += `<span class="badge b-loading">? ${missing}</span>`;
+  return html;
+}
+
+function buildSidebar() {
+  const list   = document.getElementById('gosp-list');
+  const filter = document.getElementById('search').value.toLowerCase();
+  const visible = gosps.filter(g =>
+    g.name.toLowerCase().includes(filter) || g.id.toLowerCase().includes(filter)
+  );
+
+  document.getElementById('gosp-count').textContent = `${visible.length} / ${gosps.length}`;
+  list.innerHTML = '';
+
+  visible.forEach(gosp => {
+    const div = document.createElement('div');
+    div.className = 'gosp-item' + (gosp === activeGosp ? ' active' : '');
+    div.dataset.id = gosp.id;
+    div.innerHTML = `
+      <div class="gi-name">${escHtml(gosp.name)}</div>
+      <div class="gi-id">${gosp.id}</div>
+      <div class="gi-purpose">${escHtml(gosp.purpose)}</div>
+      <div class="gi-stats">${statBadges(gosp)}</div>
+    `;
+    div.addEventListener('click', () => selectGosp(gosp));
+    list.appendChild(div);
+  });
+}
+
+// ── Load member stops one GOSP at a time ──────────────────────────────────────
+async function loadAllStops() {
+  let gospDone = 0;
+
+  for (const gosp of gosps) {
+    if (!gosp.memberRefs.length) {
+      gosp.members = [];
+      gospDone++;
+      continue;
+    }
+
+    setStatus(`Loading stops… GOSP ${gospDone + 1} / ${gosps.length} ("${gosp.name}")`);
+
+    // Fetch this GOSP's members in parallel (typically 2–10 stops)
+    gosp.members = await Promise.all(gosp.memberRefs.map(fetchStop));
+    gospDone++;
+
+    buildSidebar();
+    if (activeGosp === gosp) renderDetail(gosp);
+
+    await new Promise(r => setTimeout(r, 150));
+  }
+
+  const total = gosps.reduce((n, g) => n + (g.members?.filter(Boolean).length ?? 0), 0);
+  setStatus(`${gosps.length} GOSPs, ${total} stops loaded — click a GOSP to inspect`);
+}
+
+// ── Load GOSP list ────────────────────────────────────────────────────────────
+async function loadGosps() {
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled    = true;
+  btn.textContent = 'Loading…';
+  setStatus('Fetching GOSP list…');
+
+  gospLayer.clearLayers();
+  detailLayer.clearLayers();
+  gospMarkers.clear();
+  activeGosp = null;
+  stopCache  = {};
+
+  try {
+    const raw = await fetchJson(`${BASE}/groups-of-stop-places?count=1000`);
+    gosps = parseGosps(raw);
+
+    if (!gosps.length) {
+      setStatus('No GOSPs returned');
+      return;
+    }
+
+    buildSidebar();
+    renderGospPins();
+    setStatus(`${gosps.length} GOSPs — loading stops in background…`);
+
+    // Kick off background stop loading (don't await — let it run async)
+    loadAllStops().catch(err => setStatus(`Stop load error: ${err.message}`));
+
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Refresh';
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+function escHtml(s) {
+  return (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+document.getElementById('btn-refresh').addEventListener('click', loadGosps);
+document.getElementById('search').addEventListener('input', buildSidebar);
+</script>
+</body>
+</html>
