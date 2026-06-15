@@ -123,6 +123,18 @@
       font-weight: 600;
     }
 
+    #pog-filter {
+      margin-top: 7px;
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+      cursor: pointer;
+    }
+    #pog-filter:focus { outline: 1px solid var(--c-primary, #6f42c1); }
+
     #gosp-list { flex: 1; overflow-y: auto; }
 
     .gosp-item {
@@ -200,7 +212,7 @@
 <div id="header">
   <h1>GOSP QA <span>Viewer</span></h1>
   <button id="btn-refresh">Load GOSPs from API</button>
-  <span id="version">v0.8</span>
+  <span id="version">v0.9</span>
   <span id="status">Not loaded</span>
 </div>
 
@@ -212,7 +224,11 @@
         <span id="gosp-count" style="color:var(--c-primary, #6f42c1)">—</span>
       </div>
       <input id="search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>
+      <select id="pog-filter">
+        <option value="">Filter: PurposeOfGrouping [all]</option>
+      </select>
       <button id="btn-errors-only" class="filter-toggle">⚠ Only show GOSP with issues</button>
+
     </div>
     <div id="gosp-list"></div>
   </div>
@@ -293,6 +309,7 @@ let gosps         = [];
 let stopCache     = new Map();
 let activeGosp    = null;
 let errorsOnly    = false;
+let pogFilter     = '';
 const gospMarkers = new Map();   // gosp.id → L.Marker
 
 // ── PurposeOfGrouping colours ─────────────────────────────────────────────────
@@ -307,6 +324,22 @@ function buildPogColors() {
   pogColorMap = Object.fromEntries(
     pogs.map((p, i) => [p, THEME.pogPalette[i % THEME.pogPalette.length]])
   );
+}
+
+function buildPogFilter() {
+  const sel = document.getElementById('pog-filter');
+  const current = sel.value;
+  // Clear all but the first "All" option
+  while (sel.options.length > 1) sel.remove(1);
+  [...new Set(gosps.map(g => g.purpose))].sort().forEach(pog => {
+    const opt = document.createElement('option');
+    opt.value = pog;
+    opt.textContent = pog;
+    sel.appendChild(opt);
+  });
+  // Restore selection if still valid
+  sel.value = current in pogColorMap ? current : '';
+  pogFilter = sel.value;
 }
 
 function gospColor(gosp) {
@@ -559,6 +592,7 @@ function buildSidebar() {
   const filter = document.getElementById('search').value.toLowerCase();
   const visible = gosps.filter(g => {
     if (!g.name.toLowerCase().includes(filter) && !g.id.toLowerCase().includes(filter)) return false;
+    if (pogFilter && g.purpose !== pogFilter) return false;
     if (errorsOnly && g.members !== null) {
       const hasBad = g.members.some(s => s && !validate(s).ok);
       if (!hasBad) return false;
@@ -660,6 +694,7 @@ async function loadGosps() {
     gosps = parseGosps(raw);
     // Assign a PoG colour to each unique PurposeOfGrouping value
     buildPogColors();
+    buildPogFilter();
 
     if (!gosps.length) {
       setStatus('No GOSPs returned');
@@ -697,6 +732,10 @@ document.getElementById('search').addEventListener('input', buildSidebar);
 document.getElementById('btn-errors-only').addEventListener('click', () => {
   errorsOnly = !errorsOnly;
   document.getElementById('btn-errors-only').classList.toggle('active', errorsOnly);
+  buildSidebar();
+});
+document.getElementById('pog-filter').addEventListener('change', e => {
+  pogFilter = e.target.value;
   buildSidebar();
 });
 </script>
