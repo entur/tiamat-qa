@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline' https://unpkg.com; img-src https: data: blob:; connect-src https://*.basemaps.cartocdn.com">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlternativeNames QA Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="anonymous"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-size: 14px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 18px;
+      background: var(--c-header-bg);
+      color: #fff;
+      flex-shrink: 0;
+      border-bottom: 2px solid var(--c-primary);
+    }
+    #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
+    #header h1 span { color: var(--c-primary-light); }
+
+    .hdr-btn {
+      padding: 7px 16px;
+      background: var(--c-primary);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-block;
+      transition: background 0.15s;
+    }
+    .hdr-btn:hover:not(:disabled) { background: var(--c-primary-dark); }
+    .hdr-btn:disabled { background: var(--c-disabled-bg); cursor: not-allowed; }
+    .hdr-btn.secondary { background: #3a3a52; }
+    .hdr-btn.secondary:hover { background: #4a4a66; }
+
+    #version {
+      font-size: 11px;
+      color: #aaa;
+      background: #2e2e42;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+
+    #status {
+      font-size: 13px;
+      color: #ddd;
+      margin-left: auto;
+      max-width: 460px;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Layout ── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 380px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--c-border);
+      background: var(--c-sidebar-bg);
+      overflow: hidden;
+    }
+
+    #sidebar-top {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--c-border);
+      background: #e9e9ec;
+      flex-shrink: 0;
+    }
+    #sidebar-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    #sidebar-top-row span { font-size: 13px; font-weight: 600; color: #444; }
+    #stop-count { color: var(--c-primary); }
+
+    /* Summary block: per-type and per-language counts */
+    #summary { margin-bottom: 8px; }
+    .sum-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .sum-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 10px;
+      background: #fff;
+      border: 1px solid var(--c-border);
+      color: #333;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+    }
+    .sum-pill:hover { border-color: var(--c-primary); }
+    .sum-pill.active {
+      background: #f0ebfa;
+      border-color: var(--c-primary);
+      color: var(--c-primary-dark);
+      box-shadow: inset 0 0 0 1px var(--c-primary);
+    }
+    .sum-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .sum-label { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: 0.04em; }
+
+    #search {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--c-border);
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+    }
+    #search:focus { outline: 1px solid var(--c-primary); }
+
+    #stop-list { flex: 1; overflow-y: auto; }
+
+    .stop-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e0e0e0;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .stop-item:hover { background: #eaeaee; }
+    .stop-item.active {
+      background: #ede7f6;
+      border-left: 4px solid var(--c-primary);
+      padding-left: 8px;
+    }
+    .stop-item.active:hover { background: #e0d7f5; }
+
+    .si-name {
+      font-size: 15px; font-weight: 600; color: #1a1a2e;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .si-name .si-dot { flex-shrink: 0; }
+    .si-nsr-link {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--c-accent);
+      text-decoration: none;
+      padding: 1px 6px;
+      border: 1px solid var(--c-accent-muted);
+      border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .si-nsr-link:hover { background: var(--c-accent-hover); }
+    .si-id   { font-size: 11px; color: #888; font-family: monospace; margin-top: 2px; }
+
+    /* Per-NameType breakdown lines in a sidebar item */
+    .si-alt { font-size: 12px; margin-top: 5px; color: #333; line-height: 1.4; }
+    .si-type-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      padding: 1px 6px;
+      border-radius: 8px;
+      color: #fff;
+      margin-right: 5px;
+    }
+    .si-alt-name { color: #222; }
+    .si-lang { color: #999; font-size: 11px; }
+
+    /* ── Map ── */
+    #map { flex: 1; }
+
+    /* ── Processing overlay ── */
+    #overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(245,245,247,0.82);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1500;
+    }
+    #overlay.show { display: flex; }
+    .ov-card {
+      background: #fff;
+      padding: 26px 30px;
+      border-radius: 10px;
+      box-shadow: 0 6px 28px rgba(0,0,0,0.22);
+      min-width: 320px;
+      text-align: center;
+    }
+    .ov-title { font-size: 16px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
+    .ov-sub   { font-size: 13px; color: #666; margin-bottom: 16px; }
+    .ov-bar {
+      height: 10px;
+      background: #e3e3ea;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .ov-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--c-primary);
+      border-radius: 6px;
+      transition: width 0.1s linear;
+    }
+    .ov-stats { font-size: 13px; color: #444; margin-top: 12px; font-variant-numeric: tabular-nums; }
+
+    /* ── Leaflet popup ── */
+    .leaflet-popup-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+    .lp { min-width: 240px; max-width: 320px; }
+    .lp-title { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+    .lp-id    { font-family: monospace; font-size: 12px; color: #666; margin-bottom: 6px; }
+    .lp-alt   { font-size: 13px; margin-top: 5px; line-height: 1.45; }
+
+    /* ── Empty state ── */
+    #empty {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; color: #999; text-align: center; padding: 20px;
+    }
+    #empty h2 { font-size: 18px; color: #666; margin-bottom: 8px; }
+    #empty p  { font-size: 13px; max-width: 280px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>AlternativeNames <span>QA</span></h1>
+  <button id="btn-load" class="hdr-btn">Load NeTEx file…</button>
+  <a id="btn-export" class="hdr-btn secondary" target="_blank" rel="noopener">Get latest export ↧</a>
+  <input id="file-input" type="file" accept=".xml" style="display:none"/>
+  <span id="version">v0.2</span>
+  <span id="status">No file loaded</span>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div id="sidebar-top">
+      <div id="sidebar-top-row">
+        <span>Stops with AlternativeNames</span>
+        <span id="stop-count">—</span>
+      </div>
+      <div id="summary"></div>
+      <input id="search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>
+    </div>
+    <div id="stop-list">
+      <div id="empty">
+        <h2>No data yet</h2>
+        <p>Download the latest NeTEx export, unzip it, then load the XML file to scan for stops with alternative names.</p>
+      </div>
+    </div>
+  </div>
+  <div id="main-right" style="position:relative; flex:1; display:flex;">
+    <div id="map"></div>
+    <div id="overlay">
+      <div class="ov-card">
+        <div class="ov-title">Processing NeTEx export…</div>
+        <div class="ov-sub">Scanning for stop places with alternative names</div>
+        <div class="ov-bar"><div class="ov-bar-fill" id="ov-fill"></div></div>
+        <div class="ov-stats" id="ov-stats">0% · 0 stops found</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin="anonymous"></script>
+<script>
+(function () {
+'use strict';
+
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+// All external URLs, labels and tuning knobs in one place.
+const CONFIG = {
+  // Direct download of the latest national NeTEx export (a .zip the user unzips
+  // manually before loading the .xml inside). The button just opens this URL.
+  exportUrl:    'https://storage.googleapis.com/marduk-production/tiamat/Current_latest.zip',
+  // NSR editor deep-link for a single stop place; {id} replaced at runtime.
+  // NOTE: verify this path against the live editor — adjust if it differs.
+  nsrStopUrl:   'https://stoppested.entur.org/{id}',
+  nsrLinkLabel: 'NSR ↗',
+  // Streaming read chunk size in bytes. Smaller = smoother progress bar,
+  // larger = slightly faster overall. 4 MB is a good balance for ~400 MB files.
+  chunkSize:    4 * 1024 * 1024,
+};
+
+// ── THEME ─────────────────────────────────────────────────────────────────────
+// All colour decisions live here; applyTheme() pushes them to CSS custom
+// properties so JS (map pins) and CSS (chrome) stay in sync.
+//
+// typeColors: one colour per AlternativeName NameType. The three the dataset is
+// expected to contain (alias, translation, label) get distinct, easy-to-read
+// hues; copy/other are included as a safety net for unexpected values.
+const THEME = {
+  primary:      '#6f42c1',   // purple — chrome accent, active highlight
+  primaryDark:  '#59359a',
+  primaryLight: '#b89be0',
+  accent:       '#0d6efd',   // blue — links
+  accentMuted:  '#0d6efd33',
+  accentHover:  '#0d6efd18',
+  headerBg:     '#1c1c2e',
+  sidebarBg:    '#f5f5f7',
+  disabledBg:   '#555',
+  border:       '#d0d0d0',
+  // NameType → pin colour
+  typeColors: {
+    alias:       '#0d6efd',   // blue
+    translation: '#fd7e14',   // orange
+    label:       '#20c997',   // teal
+    copy:        '#6f42c1',   // purple (fallback — not expected)
+    other:       '#adb5bd',   // grey  (fallback — not expected)
+  },
+};
+
+// Fixed display order for NameTypes — used for segment ordering and listing,
+// so a stop's pin and breakdown are deterministic regardless of source order.
+const TYPE_ORDER = ['alias', 'translation', 'label', 'copy', 'other'];
+
+function applyTheme() {
+  const s = document.documentElement.style;
+  s.setProperty('--c-primary',       THEME.primary);
+  s.setProperty('--c-primary-dark',  THEME.primaryDark);
+  s.setProperty('--c-primary-light', THEME.primaryLight);
+  s.setProperty('--c-accent',        THEME.accent);
+  s.setProperty('--c-accent-muted',  THEME.accentMuted);
+  s.setProperty('--c-accent-hover',  THEME.accentHover);
+  s.setProperty('--c-header-bg',     THEME.headerBg);
+  s.setProperty('--c-sidebar-bg',    THEME.sidebarBg);
+  s.setProperty('--c-disabled-bg',   THEME.disabledBg);
+  s.setProperty('--c-border',        THEME.border);
+}
+applyTheme();
+
+function typeColor(type) {
+  return THEME.typeColors[type] ?? THEME.typeColors.other;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+function escHtml(s) {
+  return (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Order a set of NameTypes by TYPE_ORDER (unknown types sorted to the end).
+function orderTypes(types) {
+  return [...types].sort((a, b) => {
+    const ia = TYPE_ORDER.indexOf(a), ib = TYPE_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+const map = L.map('map').setView([64.5, 16.5], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 19,
+}).addTo(map);
+
+const stopLayer = L.layerGroup().addTo(map);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let stops       = [];      // all parsed stops with alternative names
+let activeStop  = null;
+let scanning    = false;   // re-entrancy guard: true while a file scan is running
+// Active filters chosen by clicking the summary cards. Within a category the
+// semantics are OR (any selected type / any selected language); across the two
+// categories it is AND. Empty set = no constraint for that category.
+const typeFilters = new Set();
+const langFilters = new Set();
+const markers   = new Map();   // stop.id → L.Marker
+
+// ── Segmented pie pin ─────────────────────────────────────────────────────────
+// A stop may carry several NameTypes at once. Rather than collapse that to one
+// colour, the pin is split into equal arcs — one per distinct type present —
+// so combinations are readable at a glance.
+function polar(cx, cy, r, ang) {
+  return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)];
+}
+function pieSlice(cx, cy, r, a0, a1, color) {
+  const [x0, y0] = polar(cx, cy, r, a0);
+  const [x1, y1] = polar(cx, cy, r, a1);
+  const large = (a1 - a0) > Math.PI ? 1 : 0;
+  return `<path d="M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} `
+       + `A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z" fill="${color}"/>`;
+}
+
+// Build an SVG segmented disc for the given ordered list of types.
+function pieSvg(types, r, strokeW, stroke) {
+  const size = r * 2 + strokeW * 2 + 2;
+  const c = size / 2;
+  let inner;
+  if (types.length === 1) {
+    inner = `<circle cx="${c}" cy="${c}" r="${r}" fill="${typeColor(types[0])}"/>`;
+  } else {
+    const step = (2 * Math.PI) / types.length;
+    let a = -Math.PI / 2;   // start at 12 o'clock
+    inner = '';
+    for (const t of types) {
+      inner += pieSlice(c, c, r, a, a + step, typeColor(t));
+      a += step;
+    }
+  }
+  return {
+    size,
+    svg: `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">`
+       + inner
+       + `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>`
+       + `</svg>`,
+  };
+}
+
+function stopIcon(types, active) {
+  const r       = active ? 11 : 8;
+  const strokeW = active ? 2.5 : 1.5;
+  const stroke  = active ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.4)';
+  const { size, svg } = pieSvg(types, r, strokeW, stroke);
+  return L.divIcon({
+    className: '',
+    html: svg,
+    iconSize:   [size, size],
+    iconAnchor: [size / 2, size / 2],
+    zIndexOffset: active ? 1000 : 0,
+  });
+}
+
+// Small inline disc used in the sidebar list (non-interactive, fixed size).
+function pieDotHtml(types) {
+  const { svg } = pieSvg(types, 7, 1, 'rgba(0,0,0,0.35)');
+  return `<span class="si-dot">${svg}</span>`;
+}
+
+// ── Streaming NeTEx scan ──────────────────────────────────────────────────────
+// The export is ~400 MB — far too large to DOM-parse whole. Instead the file is
+// read in chunks and scanned for <StopPlace>…</StopPlace> blocks. Each block is
+// cheaply substring-tested for '<alternativeNames'; only the small minority that
+// match are handed to DOMParser to extract fields. Everything else is discarded,
+// so peak memory stays tiny (one block + the result list).
+const PARSER  = new DOMParser();
+const OPEN_RE = /<StopPlace[\s>]/;     // matches <StopPlace …  but not <StopPlaceRef / <stopPlaces
+const CLOSE   = '</StopPlace>';
+
+// Pull every complete StopPlace block out of `buffer`, emit parsed stops, and
+// return the unprocessed remainder to carry into the next chunk.
+function drainBlocks(buffer, emit) {
+  while (true) {
+    const m = OPEN_RE.exec(buffer);
+    if (!m) {
+      // No opening tag in view. Keep only a short tail in case a tag was split
+      // across the chunk boundary; discard the rest so the buffer can't grow.
+      return buffer.length > 16 ? buffer.slice(buffer.length - 16) : buffer;
+    }
+    const start    = m.index;
+    const closeIdx = buffer.indexOf(CLOSE, start);
+    if (closeIdx === -1) {
+      // Block not finished yet — keep from its start, wait for more data.
+      return buffer.slice(start);
+    }
+    const endPos = closeIdx + CLOSE.length;
+    processBlock(buffer.slice(start, endPos), emit);
+    buffer = buffer.slice(endPos);
+  }
+}
+
+// Direct-child lookups — avoid pulling in fields from nested <quays> (which the
+// user confirmed carry no names of their own, but we stay precise regardless).
+function directChild(el, tag) {
+  for (const c of el.children) if (c.tagName === tag) return c;
+  return null;
+}
+
+function processBlock(block, emit) {
+  // Fast reject: the overwhelming majority of stops have no alternative names.
+  if (block.indexOf('<alternativeNames') === -1) return;
+
+  const doc = PARSER.parseFromString(block, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return;
+  const sp = doc.documentElement;
+  if (!sp || sp.tagName !== 'StopPlace') return;
+
+  // Primary StopPlace name (direct child <Name>)
+  const nameEl = directChild(sp, 'Name');
+  const name   = nameEl ? nameEl.textContent.trim() : (sp.getAttribute('id') || '');
+  const lang   = nameEl ? (nameEl.getAttribute('lang') || '') : '';
+
+  // Centroid (direct child only — not a quay's)
+  let coord = null;
+  const centroid = directChild(sp, 'Centroid');
+  if (centroid) {
+    const lat = parseFloat(centroid.getElementsByTagName('Latitude')[0]?.textContent);
+    const lon = parseFloat(centroid.getElementsByTagName('Longitude')[0]?.textContent);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) coord = [lat, lon];
+  }
+
+  // alternativeNames (direct child container → its AlternativeName children)
+  const altContainer = directChild(sp, 'alternativeNames');
+  if (!altContainer) return;
+  const alts = [];
+  for (const an of altContainer.children) {
+    if (an.tagName !== 'AlternativeName') continue;
+    const t  = an.getElementsByTagName('NameType')[0]?.textContent?.trim() || 'other';
+    const nm = an.getElementsByTagName('Name')[0];
+    alts.push({
+      type: t,
+      name: nm ? nm.textContent.trim() : '',
+      lang: nm ? (nm.getAttribute('lang') || '') : '',
+    });
+  }
+  if (!alts.length) return;
+
+  const types = orderTypes(new Set(alts.map(a => a.type)));
+  const langs = [...new Set(alts.map(a => a.lang).filter(Boolean))].sort();
+  const id    = sp.getAttribute('id') || '';
+
+  // Pre-built lowercase haystack so the search box can match the primary name,
+  // the id, AND every alternative name without re-lowercasing on each keystroke.
+  const search = [name, id, ...alts.map(a => a.name)].join(' ').toLowerCase();
+
+  emit({ id, name, lang, coord, alts, types, langs, search });
+}
+
+// ── Load + scan a chosen file ─────────────────────────────────────────────────
+async function loadFile(file) {
+  if (scanning) return;   // ignore a second file while one is still being scanned
+  scanning = true;
+  resetData();
+  showOverlay(true);
+  setStatus(`Reading ${file.name}…`);
+
+  // Streaming UTF-8 decoder: stream:true buffers any multi-byte character that
+  // straddles a chunk boundary, so Norwegian glyphs (æ ø å) never corrupt.
+  const decoder = new TextDecoder('utf-8');
+  const total   = file.size;
+  let offset = 0, buffer = '', found = 0;
+
+  try {
+    while (offset < total) {
+      const end = Math.min(offset + CONFIG.chunkSize, total);
+      const ab  = await file.slice(offset, end).arrayBuffer();
+      offset = end;
+      buffer += decoder.decode(ab, { stream: true });
+      buffer  = drainBlocks(buffer, s => { stops.push(s); found++; });
+
+      setProgress(offset / total, found);
+      await new Promise(r => setTimeout(r));   // yield so the bar repaints
+    }
+    buffer += decoder.decode();                // flush decoder
+    drainBlocks(buffer, s => { stops.push(s); found++; });
+    setProgress(1, found);
+
+    finishLoad(file.name);
+  } catch (err) {
+    console.error('Scan error:', err);
+    setStatus('Failed to read the file — see console for details.');
+  } finally {
+    scanning = false;
+    showOverlay(false);
+  }
+}
+
+function resetData() {
+  stops = [];
+  activeStop = null;
+  markers.clear();
+  stopLayer.eachLayer(l => l.off());
+  stopLayer.clearLayers();
+}
+
+function finishLoad(fileName) {
+  typeFilters.clear();
+  langFilters.clear();
+  buildSummary();
+  buildSidebar();
+  renderMarkers();
+
+  if (stops.length) {
+    const pts = stops.filter(s => s.coord).map(s => s.coord);
+    if (pts.length) map.fitBounds(pts, { padding: [40, 40] });
+    setStatus(`${fileName} — ${stops.length.toLocaleString()} stops with alternative names`);
+  } else {
+    setStatus(`${fileName} — no stops with alternative names found`);
+    document.getElementById('stop-list').innerHTML =
+      `<div id="empty"><h2>None found</h2><p>No StopPlace in this file contained an alternativeNames element.</p></div>`;
+  }
+}
+
+// ── Overlay / progress ────────────────────────────────────────────────────────
+function showOverlay(show) {
+  document.getElementById('overlay').classList.toggle('show', show);
+  document.getElementById('btn-load').disabled = show;
+}
+function setProgress(frac, found) {
+  const pct = Math.round(frac * 100);
+  document.getElementById('ov-fill').style.width = pct + '%';
+  document.getElementById('ov-stats').textContent =
+    `${pct}% · ${found.toLocaleString()} stops found`;
+}
+
+// ── Summary block ─────────────────────────────────────────────────────────────
+// Per-type stop counts (how many stops carry each NameType) and per-language
+// stop counts (how many stops have at least one alt name in that language).
+function buildSummary() {
+  const el = document.getElementById('summary');
+  if (!stops.length) { el.innerHTML = ''; return; }
+
+  const typeCount = {};
+  const langCount = {};
+  for (const s of stops) {
+    for (const t of s.types) typeCount[t] = (typeCount[t] || 0) + 1;
+    for (const lg of s.langs) langCount[lg] = (langCount[lg] || 0) + 1;
+  }
+
+  const typePills = orderTypes(Object.keys(typeCount)).map(t =>
+    `<span class="sum-pill${typeFilters.has(t) ? ' active' : ''}" data-cat="type" data-val="${escHtml(t)}">`
+    + `<span class="sum-swatch" style="background:${typeColor(t)}"></span>`
+    + `${escHtml(t)} ${typeCount[t].toLocaleString()}</span>`
+  ).join('');
+
+  const langPills = Object.keys(langCount).sort().map(lg =>
+    `<span class="sum-pill${langFilters.has(lg) ? ' active' : ''}" data-cat="lang" data-val="${escHtml(lg)}">`
+    + `${escHtml(lg || '—')} ${langCount[lg].toLocaleString()}</span>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="sum-label">By type</div><div class="sum-row">${typePills}</div>`
+    + `<div class="sum-label" style="margin-top:7px">By language</div><div class="sum-row">${langPills}</div>`;
+}
+
+// ── Card-click filtering ──────────────────────────────────────────────────────
+// The summary pills double as filter toggles. Clicking one adds/removes its
+// value from the relevant Set, restyles the pill, and re-renders list + map.
+function onSummaryClick(e) {
+  const pill = e.target.closest('.sum-pill');
+  if (!pill) return;
+  const set = pill.dataset.cat === 'type' ? typeFilters : langFilters;
+  const val = pill.dataset.val;
+  if (set.has(val)) set.delete(val); else set.add(val);
+  pill.classList.toggle('active', set.has(val));
+  applyFilters();
+}
+
+// ── Visible-stop computation (shared by sidebar + map) ────────────────────────
+function visibleStops() {
+  const q = document.getElementById('search').value.toLowerCase();
+  return stops.filter(s => {
+    if (q && !s.search.includes(q)) return false;
+    if (typeFilters.size && !s.types.some(t => typeFilters.has(t)))  return false;
+    if (langFilters.size && !s.langs.some(lg => langFilters.has(lg))) return false;
+    return true;
+  });
+}
+
+// ── Alt-name grouping (shared by sidebar + popup) ─────────────────────────────
+// Groups a stop's alternative names by NameType, returning entries in TYPE_ORDER
+// so the sidebar row and the map popup render identically.
+function groupAltsByType(alts) {
+  const byType = {};
+  for (const a of alts) (byType[a.type] ||= []).push(a);
+  return orderTypes(Object.keys(byType)).map(t => ({ type: t, names: byType[t] }));
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+// Render the per-NameType breakdown for one stop: every type present, each with
+// all its names and their language tags.
+function altBreakdownHtml(stop) {
+  return groupAltsByType(stop.alts).map(({ type, names }) => {
+    const rendered = names.map(a =>
+      `<span class="si-alt-name">${escHtml(a.name)}</span>`
+      + (a.lang ? ` <span class="si-lang">(${escHtml(a.lang)})</span>` : '')
+    ).join(', ');
+    return `<div class="si-alt"><span class="si-type-tag" style="background:${typeColor(type)}">${escHtml(type)}</span>${rendered}</div>`;
+  }).join('');
+}
+
+function buildSidebar() {
+  const list = document.getElementById('stop-list');
+  const vis  = visibleStops();
+  document.getElementById('stop-count').textContent =
+    `${vis.length.toLocaleString()} / ${stops.length.toLocaleString()}`;
+
+  if (!stops.length) return;   // keep the empty-state placeholder
+  list.innerHTML = '';
+
+  // Cap DOM rows for responsiveness; the map still shows every visible stop.
+  const CAP = 500;
+  const shown = vis.slice(0, CAP);
+
+  shown.forEach(stop => {
+    const div = document.createElement('div');
+    div.className = 'stop-item' + (stop === activeStop ? ' active' : '');
+    div.dataset.id = stop.id;
+
+    const nsrHref = CONFIG.nsrStopUrl.replace('{id}', stop.id);
+    let safeHref = '#';
+    try { if (new URL(nsrHref).protocol === 'https:') safeHref = nsrHref; } catch (_) {}
+
+    div.innerHTML =
+      `<div class="si-name">${pieDotHtml(stop.types)}${escHtml(stop.name)}`
+      + `<a class="si-nsr-link" href="${escHtml(safeHref)}" target="_blank" rel="noopener">${escHtml(CONFIG.nsrLinkLabel)}</a></div>`
+      + `<div class="si-id">${escHtml(stop.id)}</div>`
+      + altBreakdownHtml(stop);
+
+    div.querySelector('.si-nsr-link').addEventListener('click', e => e.stopPropagation());
+    div.addEventListener('click', () => selectStop(stop));
+    list.appendChild(div);
+  });
+
+  if (vis.length > CAP) {
+    const more = document.createElement('div');
+    more.style.cssText = 'padding:10px 12px; font-size:12px; color:#888; text-align:center;';
+    more.textContent = `Showing first ${CAP.toLocaleString()} of ${vis.length.toLocaleString()} — narrow the filter to see more.`;
+    list.appendChild(more);
+  }
+}
+
+// ── Map markers ───────────────────────────────────────────────────────────────
+function renderMarkers() {
+  stopLayer.eachLayer(l => l.off());
+  stopLayer.clearLayers();
+  markers.clear();
+
+  visibleStops().forEach(stop => {
+    if (!stop.coord) return;
+    const m = L.marker(stop.coord, { icon: stopIcon(stop.types, stop === activeStop) })
+      .addTo(stopLayer)
+      .bindTooltip(stop.name, { direction: 'top', offset: [0, -8] })
+      .bindPopup(popupHtml(stop));
+    m.on('click', () => selectStop(stop, /*fromMap*/ true));
+    markers.set(stop.id, m);
+  });
+}
+
+function popupHtml(stop) {
+  const body = groupAltsByType(stop.alts).map(({ type, names }) => {
+    const rendered = names.map(a =>
+      escHtml(a.name) + (a.lang ? ` <span class="si-lang">(${escHtml(a.lang)})</span>` : '')
+    ).join(', ');
+    return `<div class="lp-alt"><span class="si-type-tag" style="background:${typeColor(type)}">${escHtml(type)}</span>${rendered}</div>`;
+  }).join('');
+  return `<div class="lp"><div class="lp-title">${escHtml(stop.name)}`
+    + (stop.lang ? ` <span class="si-lang">(${escHtml(stop.lang)})</span>` : '')
+    + `</div><div class="lp-id">${escHtml(stop.id)}</div>${body}</div>`;
+}
+
+// ── Selection ─────────────────────────────────────────────────────────────────
+function selectStop(stop, fromMap) {
+  if (activeStop && markers.has(activeStop.id)) {
+    markers.get(activeStop.id).setIcon(stopIcon(activeStop.types, false));
+  }
+  activeStop = stop;
+
+  const m = markers.get(stop.id);
+  if (m) { m.setIcon(stopIcon(stop.types, true)); m.setZIndexOffset(1000); }
+
+  document.querySelectorAll('.stop-item.active').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.stop-item[data-id="${CSS.escape(stop.id)}"]`);
+  if (item) { item.classList.add('active'); item.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+
+  if (stop.coord) {
+    if (!fromMap) map.setView(stop.coord, Math.max(map.getZoom(), 13), { animate: true });
+    if (m) m.openPopup();
+  }
+}
+
+// ── Filtering re-render ───────────────────────────────────────────────────────
+function applyFilters() { buildSidebar(); renderMarkers(); }
+
+let _searchTimer;
+function debouncedFilter() {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(applyFilters, 150);
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+document.getElementById('btn-export').href = CONFIG.exportUrl;
+document.getElementById('btn-load').addEventListener('click', () =>
+  document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', e => {
+  const f = e.target.files?.[0];
+  if (f) loadFile(f);
+  e.target.value = '';   // allow re-loading the same file
+});
+document.getElementById('search').addEventListener('input', debouncedFilter);
+document.getElementById('summary').addEventListener('click', onSummaryClick);
+
+})();
+</script>
+</body>
+</html>
