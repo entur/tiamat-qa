@@ -2,7 +2,7 @@
 
 A lightweight, browser-based quality assurance tool for **GroupOfStopPlaces (GOSP)** data in the [Entur National Stop Register (NSR)](https://stoppested.entur.org).
 
-No build step, no server, no dependencies to install. Open the HTML file in any modern browser.
+Available at https://entur.github.io/gosp-qa/
 
 ---
 
