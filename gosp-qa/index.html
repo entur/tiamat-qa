@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline' https://unpkg.com; img-src https: data:; connect-src https://api.entur.io https://stoppested.entur.org https://*.basemaps.cartocdn.com">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GOSP QA Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="anonymous"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-size: 14px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 18px;
+      background: var(--c-header-bg);
+      color: #fff;
+      flex-shrink: 0;
+      border-bottom: 2px solid var(--c-error);
+    }
+    #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
+    #header h1 span { color: var(--c-error); }
+
+    #btn-refresh {
+      padding: 7px 18px;
+      background: var(--c-error);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    #btn-refresh:hover:not(:disabled) { background: var(--c-error-dark); }
+    #btn-refresh:disabled { background: var(--c-disabled-bg); cursor: not-allowed; }
+
+    #version {
+      font-size: 11px;
+      color: #aaa;
+      background: #2e2e42;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+
+    #status {
+      font-size: 13px;
+      color: #ddd;
+      margin-left: auto;
+      max-width: 420px;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Layout ── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 360px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--c-border);
+      background: var(--c-sidebar-bg);
+      overflow: hidden;
+    }
+
+    #sidebar-top {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--c-border);
+      background: #e9e9ec;
+      flex-shrink: 0;
+    }
+    #sidebar-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    #sidebar-top-row span { font-size: 13px; font-weight: 600; color: #444; }
+
+    #gosp-count { color: var(--c-primary); }
+
+    #search {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--c-border);
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+    }
+    #search:focus { outline: 1px solid var(--c-primary); }
+
+    .filter-toggle {
+      margin-top: 7px;
+      width: 100%;
+      padding: 6px 10px;
+      background: #fff;
+      border: 1px solid var(--c-border);
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #555;
+      text-align: left;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .filter-toggle.active {
+      background: var(--c-error-bg);
+      border-color: var(--c-error);
+      color: var(--c-error-fg);
+      font-weight: 600;
+    }
+
+    #pog-filter {
+      margin-top: 7px;
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--c-border);
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+      cursor: pointer;
+    }
+    #pog-filter:focus { outline: 1px solid var(--c-primary); }
+
+    #gosp-list { flex: 1; overflow-y: auto; }
+
+    .gosp-item {
+      padding: 11px 12px;
+      border-bottom: 1px solid #e0e0e0;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .gosp-item:hover { background: #eaeaee; }
+    .gosp-item.active {
+      background: #ede7f6;
+      border-left: 4px solid var(--c-primary);
+      padding-left: 8px;
+    }
+    .gosp-item.active:hover { background: #e0d7f5; }
+
+    .gi-name    { font-size: 15px; font-weight: 600; color: #1a1a2e; display: flex; align-items: center; gap: 6px; }
+    .gi-pog-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+    .gi-nsr-link {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--c-accent);
+      text-decoration: none;
+      padding: 1px 6px;
+      border: 1px solid var(--c-accent-muted);
+      border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .gi-nsr-link:hover { background: var(--c-accent-hover); }
+    .gi-id      { font-size: 11px; color: #888; font-family: monospace; margin-top: 2px; }
+    .gi-purpose { font-size: 12px; color: #555; margin-top: 3px; }
+
+    .gi-stats { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      padding: 3px 9px;
+      border-radius: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .b-total   { background: #e0e0e0; color: #444; }
+    .b-ok      { background: #d4edda; color: #155724; }
+    .b-bad     { background: #f8d7da; color: #721c24; }
+    .b-loading { background: #fff3cd; color: #5a4200; }
+
+    /* ── Map ── */
+    #map { flex: 1; }
+
+    /* ── Leaflet popup ── */
+    /* Override Leaflet's own font-family on popup containers */
+    .leaflet-popup-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+    .lp { min-width: 240px; }
+    .lp-title { font-weight: 700; font-size: 14px; margin-bottom: 5px; }
+    .lp-id    { font-family: monospace; font-size: 12px; color: #666; }
+    .lp-row   { font-size: 13px; margin-top: 5px; color: #333; }
+    .lp-ok    { color: var(--c-ok); font-weight: 600; }
+    .lp-bad   { color: var(--c-error); font-weight: 600; }
+    .lp-gosp  { color: var(--c-primary); font-weight: 600; }
+
+    .lp-pill {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      margin-top: 4px;
+    }
+    .pill-child   { background: #fdecea; color: #b71c1c; }
+    .pill-expired { background: #fff3cd; color: #856404; }
+    .pill-parent  { background: #e8f5e9; color: #1b5e20; }
+    .pill-mono    { background: #e3f2fd; color: #0d47a1; }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>GOSP QA <span>Viewer</span></h1>
+  <button id="btn-refresh">Load GOSPs from API</button>
+  <span id="version">v1.0</span>
+  <span id="status">Not loaded</span>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div id="sidebar-top">
+      <div id="sidebar-top-row">
+        <span>Groups of StopPlaces</span>
+        <span id="gosp-count">—</span>
+      </div>
+      <input id="search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>
+      <select id="pog-filter">
+        <option value="">Filter: PurposeOfGrouping [all]</option>
+      </select>
+      <button id="btn-errors-only" class="filter-toggle">⚠ Only show GOSP with issues</button>
+    </div>
+    <div id="gosp-list"></div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin="anonymous"></script>
+<script>
+(function () {
+'use strict';
+
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+// Central place for all external URLs and the API client identifier.
+// To point at a different environment or rename the client, edit only here.
+const CONFIG = {
+  // Base URL for the Entur stop-places read API
+  apiBase:      'https://api.entur.io/stop-places/v1/read',
+  // ET-Client-Name header value sent with every request
+  clientName:   'entur-ror-gosp-viewer',
+  // NSR deep-link for a GOSP; {id} is replaced at runtime with the GOSP id
+  nsrGospUrl:   'https://stoppested.entur.org/group/{id}',
+  // Label shown on the NSR link button in the sidebar
+  nsrLinkLabel: 'NSR ↗',
+  // Maximum GOSPs to fetch in one request (API default cap is 20)
+  gospPageSize: 1000,
+};
+
+// ── THEME ─────────────────────────────────────────────────────────────────────
+// All colour decisions live here. applyTheme() (called below) pushes these
+// values to CSS custom properties so both JS and CSS stay in sync.
+// pogPalette: exactly 4 colours cycled across PurposeOfGrouping values.
+const THEME = {
+  primary:     '#6f42c1',   // purple — active GOSP border, sidebar highlight, GOSP pin default
+  error:       '#e63946',   // red    — header stripe, refresh button, disapproved label
+  errorDark:   '#c1121f',   // red    — refresh button hover state
+  errorBg:     '#f8d7da',   // light red — error filter toggle background
+  errorFg:     '#721c24',   // dark red  — error filter toggle text
+  ok:          '#198754',   // green  — approved label and stop markers
+  accent:      '#0d6efd',   // blue   — NSR link, sidebar count
+  accentMuted: '#0d6efd33', // translucent blue — NSR link border
+  accentHover: '#0d6efd18', // lighter translucent blue — NSR link hover
+  headerBg:    '#1c1c2e',   // dark   — header background
+  sidebarBg:   '#f5f5f7',   // light  — sidebar background
+  disabledBg:  '#555',      // grey   — disabled button background
+  border:      '#d0d0d0',   // light grey — dividers and input borders
+  pogPalette:  ['#6f42c1', '#0d6efd', '#fd7e14', '#20c997'],
+};
+
+// ── applyTheme ────────────────────────────────────────────────────────────────
+// Writes THEME values as CSS custom properties on :root so <style> blocks
+// using var(--c-xxx) pick them up without duplication.
+// Called once immediately, before the map is initialised.
+function applyTheme() {
+  const s = document.documentElement.style;
+  s.setProperty('--c-primary',      THEME.primary);
+  s.setProperty('--c-error',        THEME.error);
+  s.setProperty('--c-error-dark',   THEME.errorDark);
+  s.setProperty('--c-error-bg',     THEME.errorBg);
+  s.setProperty('--c-error-fg',     THEME.errorFg);
+  s.setProperty('--c-ok',           THEME.ok);
+  s.setProperty('--c-accent',       THEME.accent);
+  s.setProperty('--c-accent-muted', THEME.accentMuted);
+  s.setProperty('--c-accent-hover', THEME.accentHover);
+  s.setProperty('--c-header-bg',    THEME.headerBg);
+  s.setProperty('--c-sidebar-bg',   THEME.sidebarBg);
+  s.setProperty('--c-disabled-bg',  THEME.disabledBg);
+  s.setProperty('--c-border',       THEME.border);
+}
+applyTheme();
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const HEADERS = { 'ET-Client-Name': CONFIG.clientName };
+
+// Validates that a GOSP id matches the expected NeTEx format before it enters
+// application state (URL construction, DOM injection, CSS selectors).
+const GOSP_ID_RE = /^[A-Z]{3}:GroupOfStopPlaces:[A-Za-z0-9_:-]+$/;
+
+// Button label strings — single source of truth for the Refresh button text.
+const LABEL_LOAD    = 'Load GOSPs from API';
+const LABEL_REFRESH = 'Refresh';
+
+// ── today() ───────────────────────────────────────────────────────────────────
+// Returns a fresh Date instance on every call. Using a function rather than a
+// module-level constant avoids stale expiry checks when the viewer stays open
+// past midnight.
+function today() { return new Date(); }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+function escHtml(s) {
+  return (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+// CartoDB Positron tiles: clean, low-contrast, ideal for data overlays.
+const map = L.map('map').setView([64.5, 16.5], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 19,
+}).addTo(map);
+
+// Two layer groups:
+//   gospLayer   — one pin per GOSP, always visible regardless of selection.
+//   detailLayer — member stop markers + polylines for the currently selected
+//                 GOSP only; cleared every time a new GOSP is selected.
+const gospLayer   = L.layerGroup().addTo(map);
+const detailLayer = L.layerGroup().addTo(map);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let gosps         = [];
+// stopCache: Map<stopId, parsedStop> — avoids re-fetching the same stop when
+// it appears as a member of more than one GOSP (deduplication).
+const stopCache   = new Map();
+let activeGosp    = null;
+let errorsOnly    = false;
+let pogFilter     = '';
+// loadGen: incremented at the start of each loadGosps() call so that any
+// in-flight loadAllStops() from a prior call can detect it was superseded
+// and abort cleanly after each await.
+let loadGen       = 0;
+const gospMarkers = new Map();   // gosp.id → L.Marker
+
+// ── PurposeOfGrouping colours ─────────────────────────────────────────────────
+// pogColorMap is built once after the GOSP list is loaded.
+// Each unique PoG value is assigned a colour from THEME.pogPalette in
+// alphabetical order; colours cycle if there are more PoG values than palette
+// entries (unlikely in practice with 4 slots for typical datasets).
+let pogColorMap = {};
+
+function buildPogColors() {
+  const pogs = [...new Set(gosps.map(g => g.purpose))].sort();
+  pogColorMap = Object.fromEntries(
+    pogs.map((p, i) => [p, THEME.pogPalette[i % THEME.pogPalette.length]])
+  );
+}
+
+function buildPogFilter() {
+  const sel = document.getElementById('pog-filter');
+  const current = sel.value;
+  // Clear all but the first "All" option
+  while (sel.options.length > 1) sel.remove(1);
+  [...new Set(gosps.map(g => g.purpose))].sort().forEach(pog => {
+    const opt = document.createElement('option');
+    opt.value = pog;
+    opt.textContent = pog;
+    sel.appendChild(opt);
+  });
+  // Restore selection if still valid
+  sel.value = current in pogColorMap ? current : '';
+  pogFilter = sel.value;
+}
+
+function gospColor(gosp) {
+  return pogColorMap[gosp.purpose] ?? THEME.primary;
+}
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+// GOSP pin: circle whose size and opacity convey active/inactive state.
+// Active pins also get a higher zIndexOffset so they render above neighbours.
+function gospIcon(active, color) {
+  color = color ?? THEME.primary;
+  const s      = active ? 22 : 16;
+  const border = active ? '3px solid #fff' : '2px solid rgba(255,255,255,0.8)';
+  const shadow = active ? '0 2px 8px rgba(0,0,0,0.55)' : '0 1px 4px rgba(0,0,0,0.35)';
+  const bg     = active ? color : color + 'cc';   // slightly transparent when inactive
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:${s}px;height:${s}px;border-radius:50%;background:${bg};border:${border};box-shadow:${shadow};"></div>`,
+    iconSize:   [s, s],
+    iconAnchor: [s / 2, s / 2],
+    zIndexOffset: active ? 1000 : 0,
+  });
+}
+
+// Member stop pin: smaller circle coloured by validation result.
+// Green (THEME.ok) = approved, red (THEME.error) = disapproved.
+function stopIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2.5px solid rgba(0,0,0,0.4);"></div>`,
+    iconSize:   [14, 14],
+    iconAnchor: [7, 7],
+  });
+}
+
+// ── JSON helpers ──────────────────────────────────────────────────────────────
+function jsonCoord(loc) {
+  const lat = loc?.latitude;
+  const lng = loc?.longitude;
+  if (lat == null || lng == null) return null;
+  return [lat, lng];
+}
+
+function jsonKeyValue(keyList, key) {
+  const kvs = keyList?.keyValue;
+  if (!Array.isArray(kvs)) return null;
+  return kvs.find(kv => kv.key === key)?.value ?? null;
+}
+
+// ── Parse GOSP list ───────────────────────────────────────────────────────────
+// Normalises the raw API array into lightweight objects used throughout the UI.
+// members is null until loadAllStops() resolves it for this GOSP.
+function parseGosps(data) {
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter(g => GOSP_ID_RE.test(g.id))   // discard entries with malformed NeTEx IDs early
+    .map(g => {
+      const refs = g.members?.stopPlaceRef;
+      const memberRefs = Array.isArray(refs)
+        ? refs.map(r => r.ref).filter(Boolean)
+        : (refs?.ref ? [refs.ref] : []);
+      return {
+        id:         g.id,
+        name:       g.name?.value ?? g.id,
+        purpose:    g.purposeOfGroupingRef?.ref ?? '—',
+        centroid:   jsonCoord(g.centroid?.location),
+        memberRefs,
+        members:    null,   // populated later by loadAllStops()
+      };
+    });
+}
+
+// ── Parse single stop ─────────────────────────────────────────────────────────
+// Extracts the fields needed for validation and map rendering.
+function parseStop(data, id) {
+  if (!data) return null;
+  const vb        = Array.isArray(data.validBetween) ? data.validBetween[0] : data.validBetween;
+  const toDateRaw = vb?.toDate ?? null;
+  const toDate    = toDateRaw ? new Date(toDateRaw) : null;
+  return {
+    id,
+    name:      data.name?.value ?? id,
+    coord:     jsonCoord(data.centroid?.location),
+    parentRef: data.parentSiteRef?.ref ?? null,
+    isParent:  jsonKeyValue(data.keyList, 'IS_PARENT_STOP_PLACE') === 'true',
+    expired:   toDate !== null && toDate < today(),
+    toDateRaw,
+  };
+}
+
+// ── Validation ────────────────────────────────────────────────────────────────
+// A stop is APPROVED if:
+//   • it is a multimodal parent (isParent === true), OR
+//   • it has no parentRef AND is not expired (standalone monomodal, still valid)
+//
+// A stop is DISAPPROVED if any of the following:
+//   • expired  — toDate is in the past
+//   • monomodal child — not isParent AND has a parentRef (belongs to a parent
+//     stop place, so the GOSP should reference the parent instead)
+//
+// reasons[] is non-empty only when disapproved; each entry is a human-readable
+// string used in the sidebar badge and the map popup.
+//
+// Results are memoised on stop._validation to avoid redundant re-evaluation
+// across the multiple call sites (statBadges, selectGosp, renderDetail, filters).
+function validate(stop) {
+  if (stop._validation) return stop._validation;
+  const reasons = [];
+  if (stop.expired)                     reasons.push(`Expired ${stop.toDateRaw?.slice(0, 10)}`);
+  if (!stop.isParent && stop.parentRef) reasons.push(`Child of ${stop.parentRef}`);
+  return (stop._validation = { ok: reasons.length === 0, reasons });
+}
+
+// ── gospStats ─────────────────────────────────────────────────────────────────
+// Derives ok / bad / missing counts for a GOSP from its members array.
+// Extracted from the duplicated counting logic in statBadges and selectGosp.
+function gospStats(gosp) {
+  const loaded  = (gosp.members || []).filter(Boolean);
+  const ok      = loaded.filter(s => validate(s).ok).length;
+  const bad     = loaded.length - ok;
+  const missing = gosp.memberRefs.length - loaded.length;
+  return { loaded, ok, bad, missing };
+}
+
+// ── Fetch helpers ─────────────────────────────────────────────────────────────
+async function fetchJson(url) {
+  const res = await fetch(url, {
+    headers:     HEADERS,
+    mode:        'cors',
+    credentials: 'omit',
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// fetchStop uses stopCache to avoid duplicate HTTP requests when the same stop
+// appears as a member in multiple GOSPs (the Map keyed by stop id acts as a
+// simple in-memory deduplication layer for the lifetime of one load session).
+async function fetchStop(id) {
+  if (stopCache.has(id)) return stopCache.get(id);
+  const data = await fetchJson(`${CONFIG.apiBase}/stop-places/${encodeURIComponent(id)}`);
+  const stop = parseStop(data, id);
+  if (stop) stopCache.set(id, stop);
+  return stop;
+}
+
+// ── Map: render all GOSP pins ─────────────────────────────────────────────────
+function renderGospPins() {
+  gospLayer.eachLayer(l => l.off());   // detach event listeners before clearing
+  gospLayer.clearLayers();
+  gospMarkers.clear();
+  gosps.forEach(gosp => {
+    if (!gosp.centroid) return;
+    const color = gospColor(gosp);
+    const m = L.marker(gosp.centroid, { icon: gospIcon(false, color) })
+      .addTo(gospLayer)
+      .bindTooltip(gosp.name, { direction: 'top', offset: [0, -6] });
+    m.on('click', () => selectGosp(gosp));
+    gospMarkers.set(gosp.id, m);
+  });
+}
+
+// ── Map: render member detail for selected GOSP ───────────────────────────────
+// Clears detailLayer and rebuilds it with:
+//   • a dashed polyline from the GOSP centroid to each member stop
+//   • a coloured circle marker per stop (green = ok, red = disapproved)
+//   • a popup on each marker with name, id, validation status
+function renderDetail(gosp) {
+  detailLayer.eachLayer(l => l.off());   // detach event listeners before clearing
+  detailLayer.clearLayers();
+  const gll    = gosp.centroid;
+  const bounds = gll ? [gll] : [];
+
+  (gosp.members || []).forEach(stop => {
+    if (!stop?.coord) return;
+    bounds.push(stop.coord);
+
+    const { ok, reasons } = validate(stop);
+    const color = ok ? THEME.ok : THEME.error;
+
+    if (gll) {
+      L.polyline([gll, stop.coord], {
+        color, weight: 2.5, opacity: 0.55, dashArray: '7 5',
+      }).addTo(detailLayer);
+    }
+
+    const typeLabel = stop.isParent
+      ? '<span class="lp-pill pill-parent">Multimodal parent</span>'
+      : stop.parentRef
+        ? '<span class="lp-pill pill-child">Monomodal child</span>'
+        : '<span class="lp-pill pill-mono">Monomodal standalone</span>';
+
+    // reasons values come from the API (toDateRaw, parentRef) — escape before injecting.
+    const statusHtml = ok
+      ? `<div class="lp-row lp-ok">✓ Approved member</div>${typeLabel}`
+      : `<div class="lp-row lp-bad">✗ Disapproved member</div>${typeLabel}` +
+        reasons.map(r => `<span class="lp-pill pill-expired">${escHtml(r)}</span>`).join('');
+
+    L.marker(stop.coord, { icon: stopIcon(color) })
+      .addTo(detailLayer)
+      .bindPopup(`
+        <div class="lp">
+          <div class="lp-title">${escHtml(stop.name)}</div>
+          <div class="lp-id">${escHtml(stop.id)}</div>
+          ${statusHtml}
+        </div>`);
+  });
+
+  if (bounds.length > 1)        map.fitBounds(bounds, { padding: [55, 55], maxZoom: 14 });
+  else if (bounds.length === 1) map.setView(bounds[0], 13);
+}
+
+// ── Select GOSP ───────────────────────────────────────────────────────────────
+// Triggered by sidebar click OR map pin click. Updates:
+//   • the previously active GOSP pin → inactive icon
+//   • the newly active GOSP pin → active icon + raised z-index
+//   • sidebar item .active class + smooth scroll into view
+//   • detailLayer (member stops + polylines)
+//   • status bar text
+function selectGosp(gosp) {
+  // Reset previous active marker
+  if (activeGosp) {
+    const prev = gospMarkers.get(activeGosp.id);
+    if (prev) prev.setIcon(gospIcon(false, gospColor(activeGosp)));
+  }
+  activeGosp = gosp;
+
+  // Activate new marker
+  const m = gospMarkers.get(gosp.id);
+  if (m) { m.setIcon(gospIcon(true, gospColor(gosp))); m.setZIndexOffset(1000); }
+
+  // Highlight sidebar item and scroll to it
+  document.querySelectorAll('.gosp-item.active').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.gosp-item[data-id="${CSS.escape(gosp.id)}"]`);
+  if (item) {
+    item.classList.add('active');
+    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Show member detail (members may still be loading — renderDetail handles null gracefully)
+  renderDetail(gosp);
+
+  if (gosp.members) {
+    const { ok, bad } = gospStats(gosp);
+    setStatus(`"${gosp.name}" — ${ok} approved, ${bad} disapproved`);
+  } else {
+    setStatus(`"${gosp.name}" — stops loading…`);
+  }
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+// statBadges: renders coloured count badges for a GOSP sidebar row.
+// While members are still loading the single "Loading…" badge is shown.
+function statBadges(gosp) {
+  if (!gosp.members) {
+    return `<span class="badge b-loading">Loading…</span>`;
+  }
+  const { ok, bad, missing } = gospStats(gosp);
+  let html = `<span class="badge b-total">${gosp.memberRefs.length} stops</span>`;
+  if (ok  > 0)     html += `<span class="badge b-ok">✓ ${ok}</span>`;
+  if (bad > 0)     html += `<span class="badge b-bad">✗ ${bad}</span>`;
+  if (missing > 0) html += `<span class="badge b-loading">? ${missing}</span>`;
+  return html;
+}
+
+// buildSidebar: full re-render of the GOSP list, applying both the text search
+// filter and the errorsOnly toggle. Called after every data change.
+function buildSidebar() {
+  const list   = document.getElementById('gosp-list');
+  const filter = document.getElementById('search').value.toLowerCase();
+  const visible = gosps.filter(g => {
+    if (!g.name.toLowerCase().includes(filter) && !g.id.toLowerCase().includes(filter)) return false;
+    if (pogFilter && g.purpose !== pogFilter) return false;
+    if (errorsOnly && g.members !== null) {
+      const hasBad = g.members.some(s => s && !validate(s).ok);
+      if (!hasBad) return false;
+    }
+    return true;
+  });
+
+  document.getElementById('gosp-count').textContent = `${visible.length} / ${gosps.length}`;
+  list.innerHTML = '';
+
+  visible.forEach(gosp => {
+    const div = document.createElement('div');
+    div.className = 'gosp-item' + (gosp === activeGosp ? ' active' : '');
+    div.dataset.id = gosp.id;
+    const color = gospColor(gosp);
+
+    // CONFIG.nsrGospUrl has {id} as a placeholder; replace it with the actual GOSP id.
+    const nsrHref = CONFIG.nsrGospUrl.replace('{id}', gosp.id);
+    // Guard: only allow https: URLs to prevent javascript: or other unexpected protocols.
+    let safeHref = '#';
+    try {
+      const u = new URL(nsrHref);
+      if (u.protocol === 'https:') safeHref = nsrHref;
+    } catch (_) { /* malformed URL — leave safeHref as '#' */ }
+
+    div.innerHTML = `
+      <div class="gi-name">
+        <span class="gi-pog-dot" style="background:${escHtml(color)}"></span>${escHtml(gosp.name)}
+        <a class="gi-nsr-link" href="${escHtml(safeHref)}" target="_blank" rel="noopener">${escHtml(CONFIG.nsrLinkLabel)}</a>
+      </div>
+      <div class="gi-id">${escHtml(gosp.id)}</div>
+      <div class="gi-purpose">${escHtml(gosp.purpose)}</div>
+      <div class="gi-stats">${statBadges(gosp)}</div>
+    `;
+    div.querySelector('.gi-nsr-link').addEventListener('click', e => e.stopPropagation());
+    div.addEventListener('click', () => selectGosp(gosp));
+    list.appendChild(div);
+  });
+}
+
+// Debounced wrapper used on the search input to avoid a full DOM rebuild on
+// every keystroke when the user is typing quickly.
+let _sidebarTimer;
+function debouncedBuildSidebar() {
+  clearTimeout(_sidebarTimer);
+  _sidebarTimer = setTimeout(buildSidebar, 120);
+}
+
+// ── Load member stops — GOSP by GOSP ─────────────────────────────────────────
+// Stops are loaded sequentially one GOSP at a time (not all in parallel) for
+// two reasons:
+//   1. Progressive UX — the sidebar updates GOSP-by-GOSP so the user sees
+//      validation badges appearing incrementally rather than everything
+//      arriving at once.
+//   2. Politeness — firing hundreds of concurrent requests risks hitting
+//      rate-limit thresholds on the API.
+//
+// Within each GOSP the member stops ARE fetched in parallel with
+// Promise.allSettled (typically 2–10 stops per GOSP), so one failed stop
+// request does not cancel the rest.
+//
+// A 150 ms pause between GOSPs keeps the request rate comfortable and lets the
+// browser stay responsive while the sidebar re-renders.
+//
+// gen is the generation counter captured at the start of the parent loadGosps()
+// call. Checks after every await allow this loop to exit silently if the user
+// hits Refresh before all stops are loaded.
+async function loadAllStops(gen) {
+  let gospDone = 0;
+
+  for (const gosp of gosps) {
+    if (gen !== loadGen) return;   // a newer load supersedes this one
+
+    if (!gosp.memberRefs.length) {
+      gosp.members = [];
+      gospDone++;
+      continue;
+    }
+
+    setStatus(`Loading stops… GOSP ${gospDone + 1} / ${gosps.length} ("${gosp.name}")`);
+
+    // Fetch all members of this GOSP concurrently; failed fetches resolve to null.
+    const results = await Promise.allSettled(gosp.memberRefs.map(fetchStop));
+    if (gen !== loadGen) return;   // abort if superseded while awaiting
+
+    gosp.members = results.map(r => r.status === 'fulfilled' ? r.value : null);
+    gospDone++;
+
+    buildSidebar();
+    if (activeGosp === gosp) renderDetail(gosp);
+
+    // 150 ms pause between GOSPs: progressive UX + polite API usage
+    await new Promise(r => setTimeout(r, 150));
+  }
+
+  if (gen !== loadGen) return;
+
+  const total = gosps.reduce((n, g) => n + (g.members?.filter(Boolean).length ?? 0), 0);
+  setStatus(`${gosps.length} GOSPs, ${total} stops loaded — click a GOSP to inspect`);
+}
+
+// ── Load GOSP list ────────────────────────────────────────────────────────────
+// Entry point triggered by the "Load GOSPs" / "Refresh" button.
+//
+// gospPageSize config: the API defaults to a page size of 20, which means
+// a plain request returns only the first 20 GOSPs.  Passing count=gospPageSize
+// fetches up to that many in one shot, avoiding pagination for typical datasets.
+async function loadGosps() {
+  const gen = ++loadGen;   // invalidate any in-flight loadAllStops from prior calls
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled    = true;
+  btn.textContent = 'Loading…';
+  setStatus('Fetching GOSP list…');
+
+  gospLayer.eachLayer(l => l.off());
+  gospLayer.clearLayers();
+  detailLayer.eachLayer(l => l.off());
+  detailLayer.clearLayers();
+  gospMarkers.clear();
+  activeGosp = null;
+  stopCache.clear();   // reset deduplication cache on each full reload
+
+  try {
+    const raw = await fetchJson(
+      `${CONFIG.apiBase}/groups-of-stop-places?count=${CONFIG.gospPageSize}`
+    );
+    if (gen !== loadGen) return;   // superseded while awaiting
+
+    gosps = parseGosps(raw);
+    if (gosps.length === CONFIG.gospPageSize) {
+      console.warn(`GOSP list may be capped at ${CONFIG.gospPageSize} entries; some GOSPs could be missing.`);
+    }
+
+    // Assign a PoG colour to each unique PurposeOfGrouping value
+    buildPogColors();
+    buildPogFilter();
+
+    if (!gosps.length) {
+      setStatus('No GOSPs returned');
+      return;
+    }
+
+    buildSidebar();
+    renderGospPins();
+    setStatus(`${gosps.length} GOSPs — loading stops in background…`);
+
+    // Kick off background stop loading; don't await so the map stays interactive.
+    loadAllStops(gen).catch(err => {
+      console.error('Stop load error:', err);
+      setStatus('Stop loading failed — check the console for details.');
+    });
+
+  } catch (err) {
+    console.error('GOSP load error:', err);
+    setStatus('Could not load GOSP list. Check your network connection.');
+  } finally {
+    // Only restore the button when this call is still the active load.
+    // If the user hit Refresh again before we got here, the newer call owns
+    // the button and we must not interfere with its disabled state.
+    if (gen === loadGen) {
+      btn.disabled    = false;
+      btn.textContent = gosps.length ? LABEL_REFRESH : LABEL_LOAD;
+    }
+  }
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+document.getElementById('btn-refresh').addEventListener('click', loadGosps);
+document.getElementById('search').addEventListener('input', debouncedBuildSidebar);
+document.getElementById('btn-errors-only').addEventListener('click', () => {
+  errorsOnly = !errorsOnly;
+  document.getElementById('btn-errors-only').classList.toggle('active', errorsOnly);
+  buildSidebar();
+});
+document.getElementById('pog-filter').addEventListener('change', e => {
+  pogFilter = e.target.value;
+  buildSidebar();
+});
+
+})();
+</script>
+</body>
+</html>
