@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline' https://unpkg.com; img-src https: data: blob:; connect-src https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NSR QA Suite</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="anonymous"/>
+  <style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Global top bar ── */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  background: var(--c-header-bg);
+  color: #fff;
+  flex-shrink: 0;
+}
+#topbar h1 { font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
+#topbar h1 span { color: var(--c-primary-light); }
+#version {
+  font-size: 11px; color: #aaa; background: #2e2e42;
+  padding: 2px 7px; border-radius: 4px; font-family: monospace;
+}
+.tb-btn {
+  padding: 6px 14px; background: var(--c-primary); color: #fff; border: none;
+  border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600;
+  text-decoration: none; display: inline-block; transition: background 0.15s;
+}
+.tb-btn:hover:not(:disabled) { background: var(--c-primary-dark); }
+.tb-btn:disabled { background: var(--c-disabled-bg); cursor: not-allowed; }
+.tb-btn.secondary { background: #3a3a52; }
+.tb-btn.secondary:hover { background: #4a4a66; }
+
+.tb-region { display: flex; gap: 6px; }
+.tb-region select, .tb-bg select {
+  padding: 5px 8px; border: 1px solid #3a3a52; border-radius: 4px;
+  font-size: 12px; background: #2e2e42; color: #eee; cursor: pointer; max-width: 170px;
+}
+.tb-region select:disabled { opacity: 0.5; cursor: not-allowed; }
+.tb-bg { font-size: 12px; color: #bbb; display: flex; align-items: center; gap: 6px; }
+
+#status {
+  font-size: 13px; color: #ddd; margin-left: auto; max-width: 380px;
+  text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── Tab bar ── */
+#tabs {
+  display: flex; gap: 2px; flex-shrink: 0;
+  background: #e9e9ec; border-bottom: 1px solid var(--c-border); padding: 0 10px;
+}
+.tab {
+  border: none; background: transparent; cursor: pointer;
+  padding: 9px 16px; font-size: 13px; font-weight: 600; color: #666;
+  border-bottom: 3px solid transparent; transition: color 0.12s, border-color 0.12s;
+}
+.tab:hover { color: var(--c-primary); }
+.tab.active { color: var(--c-primary); border-bottom-color: var(--c-primary); background: #f5f5f7; }
+.tab:disabled { color: #bbb; cursor: not-allowed; }
+
+/* ── Body: sidebar + map ── */
+#body { display: flex; flex: 1; overflow: hidden; }
+#sidebar {
+  width: 380px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--c-border); background: var(--c-sidebar-bg); overflow: hidden;
+}
+.tool-pane { display: none; flex-direction: column; overflow: hidden; height: 100%; }
+.tool-pane.active { display: flex; }
+.pane-top { padding: 10px 12px; border-bottom: 1px solid var(--c-border); background: #e9e9ec; flex-shrink: 0; }
+.pane-list { flex: 1; overflow-y: auto; }
+
+#map-wrap { position: relative; flex: 1; display: flex; }
+#map { flex: 1; }
+
+/* ── Processing overlay ── */
+#overlay {
+  position: absolute; inset: 0; background: rgba(245,245,247,0.85);
+  display: none; align-items: center; justify-content: center; z-index: 1500;
+}
+#overlay.show { display: flex; }
+.ov-card {
+  background: #fff; padding: 24px 30px; border-radius: 10px;
+  box-shadow: 0 6px 28px rgba(0,0,0,0.22); min-width: 320px; text-align: center;
+}
+.ov-title { font-size: 16px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
+.ov-sub { font-size: 13px; color: #666; margin-bottom: 16px; }
+.ov-bar { height: 10px; background: #e3e3ea; border-radius: 6px; overflow: hidden; }
+.ov-bar-fill { height: 100%; width: 0%; background: var(--c-primary); border-radius: 6px; transition: width 0.1s linear; }
+.ov-stats { font-size: 13px; color: #444; margin-top: 12px; font-variant-numeric: tabular-nums; }
+
+/* ── Empty hint ── */
+#empty-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  text-align: center; color: #889; pointer-events: none; z-index: 400;
+}
+#empty-hint h2 { font-size: 18px; color: #667; margin-bottom: 6px; }
+#empty-hint p { font-size: 13px; max-width: 300px; line-height: 1.5; }
+#empty-hint.hidden { display: none; }
+
+/* ── Shared sidebar bits (used by tool modules) ── */
+.pane-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.pane-title span:first-child { font-size: 13px; font-weight: 600; color: #444; }
+.pane-count { color: var(--c-primary); font-weight: 600; }
+
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 12px 12px; }
+.stat-card { background: #fff; border: 1px solid var(--c-border); border-radius: 8px; padding: 10px 12px; }
+.stat-num { font-size: 22px; font-weight: 700; color: #1a1a2e; font-variant-numeric: tabular-nums; }
+.stat-lbl { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
+
+.region-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.region-table th { text-align: left; font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: 0.03em; padding: 6px 12px; position: sticky; top: 0; background: var(--c-sidebar-bg); }
+.region-table td { padding: 6px 12px; border-top: 1px solid #e6e6ea; }
+.region-table td.num { text-align: right; font-variant-numeric: tabular-nums; color: #555; }
+.region-table tr.click { cursor: pointer; }
+.region-table tr.click:hover td { background: #eceaf6; }
+
+.tool-stub { padding: 24px; color: #889; line-height: 1.5; }
+.tool-stub h3 { color: #556; margin-bottom: 6px; }
+
+/* ── Shared tool controls (pane-top) ── */
+.pane-top input[type="text"] {
+  width: 100%; margin-top: 7px; padding: 7px 10px; border: 1px solid var(--c-border);
+  border-radius: 4px; font-size: 13px; background: #fff;
+}
+.pane-top input[type="text"]:focus { outline: 1px solid var(--c-primary); }
+.pane-controls { display: flex; gap: 8px; align-items: center; margin-top: 7px; }
+.ctl { font-size: 12px; color: #555; display: flex; align-items: center; gap: 5px; flex: 1; }
+.ctl select { flex: 1; padding: 5px 7px; border: 1px solid var(--c-border); border-radius: 4px; font-size: 12px; background: #fff; cursor: pointer; }
+.map-mode { display: flex; border: 1px solid var(--c-border); border-radius: 5px; overflow: hidden; }
+.map-mode button { border: none; background: #fff; color: #555; padding: 5px 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.map-mode button + button { border-left: 1px solid var(--c-border); }
+.map-mode button.active { background: var(--c-primary); color: #fff; }
+.filter-toggle {
+  margin-top: 7px; width: 100%; padding: 6px 10px; background: #fff; border: 1px solid var(--c-border);
+  border-radius: 4px; font-size: 13px; cursor: pointer; color: #555; text-align: left;
+}
+.filter-toggle.active { background: var(--c-error-bg, #f8d7da); border-color: var(--c-danger); color: #721c24; font-weight: 600; }
+.muted { color: #999; font-size: 12px; }
+
+/* ── Filter cards ── */
+.sum-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; }
+.sum-label { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 7px; }
+.sum-pill {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+  padding: 3px 9px; border-radius: 10px; background: #fff; border: 1px solid var(--c-border);
+  color: #333; cursor: pointer; user-select: none; transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.sum-pill:hover { border-color: var(--c-primary); }
+.sum-pill.active { background: #f0ebfa; border-color: var(--c-primary); color: var(--c-primary-dark); box-shadow: inset 0 0 0 1px var(--c-primary); }
+.sum-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── List rows (shared) ── */
+.stop-item { padding: 10px 12px; border-bottom: 1px solid #e0e0e0; cursor: pointer; transition: background 0.1s; }
+.stop-item:hover { background: #eaeaee; }
+.stop-item.active { background: #ede7f6; border-left: 4px solid var(--c-primary); padding-left: 8px; }
+.stop-item.active:hover { background: #e0d7f5; }
+.si-name { font-size: 15px; font-weight: 600; color: #1a1a2e; display: flex; align-items: center; gap: 6px; }
+.si-name .si-dot, .tg-dot, .gi-pog-dot { flex-shrink: 0; }
+.tg-dot, .gi-pog-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.si-nsr-link {
+  margin-left: auto; font-size: 11px; font-weight: 600; color: var(--c-accent); text-decoration: none;
+  padding: 1px 6px; border: 1px solid var(--c-accent-muted); border-radius: 4px; white-space: nowrap; flex-shrink: 0;
+}
+.si-nsr-link:hover { background: var(--c-accent-hover); }
+.si-id { font-size: 11px; color: #888; font-family: monospace; margin-top: 2px; }
+.list-more { padding: 10px 12px; font-size: 12px; color: #888; text-align: center; }
+
+/* ── AltName breakdown ── */
+.si-alt { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; }
+.si-type-tag { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 1px 6px; border-radius: 8px; color: #fff; flex-shrink: 0; margin-top: 1px; }
+.alt-lines { flex: 1; min-width: 0; }
+.alt-line { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 1px 0; font-size: 12px; }
+.alt-rating { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; cursor: help; }
+.rg { display: block; }
+.si-alt-name { color: #222; }
+.si-lang { color: #999; font-size: 11px; }
+.alt-pct { font-size: 10px; color: #999; font-variant-numeric: tabular-nums; }
+.alt-flag { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 6px; white-space: nowrap; }
+.alt-flag.mal { background: #fff3cd; color: #5a4200; }
+.alt-flag.col { background: #f8d7da; color: #721c24; }
+
+/* ── Tags ── */
+.stat-grid.compact { grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0 2px; }
+.stat-grid.compact .stat-card { padding: 7px 9px; }
+.stat-grid.compact .stat-num { font-size: 17px; }
+.tg-line { margin-top: 5px; font-size: 12px; line-height: 1.4; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tg-name { font-size: 10px; font-weight: 700; color: #fff; padding: 1px 7px; border-radius: 8px; white-space: nowrap; }
+.tg-age { font-size: 11px; color: #555; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tg-resolved { font-size: 10px; color: #198754; font-weight: 600; }
+.tg-comment { flex-basis: 100%; color: #333; padding-left: 2px; }
+
+/* ── GOSP ── */
+.gi-purpose { font-size: 12px; color: #555; margin-top: 3px; }
+.gi-stats { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.badge { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 10px; font-weight: 700; white-space: nowrap; }
+.b-total { background: #e0e0e0; color: #444; }
+.b-ok { background: #d4edda; color: #155724; }
+.b-bad { background: #f8d7da; color: #721c24; }
+.b-warn { background: #fff3cd; color: #5a4200; }
+
+/* ── Popups ── */
+.leaflet-popup-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+.lp { min-width: 220px; max-width: 320px; }
+.lp-title { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+.lp-id { font-family: monospace; font-size: 12px; color: #666; margin-bottom: 6px; }
+.lp-ok { color: var(--c-ok); font-weight: 600; font-size: 13px; margin-top: 4px; }
+.lp-bad { color: var(--c-danger); font-weight: 600; font-size: 13px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<header id="topbar">
+  <h1>NSR QA <span>Suite</span></h1>
+  <span id="version">v0.1</span>
+  <button id="btn-load" class="tb-btn">Load NeTEx file…</button>
+  <a id="btn-export" class="tb-btn secondary" target="_blank" rel="noopener">Get latest export ↧</a>
+  <input id="file-input" type="file" accept=".xml" hidden/>
+
+  <div class="tb-region">
+    <select id="region-county" disabled><option value="">All counties</option></select>
+    <select id="region-muni" disabled><option value="">All municipalities</option></select>
+  </div>
+
+  <label class="tb-bg">Map
+    <select id="map-bg"></select>
+  </label>
+
+  <span id="status">No file loaded</span>
+</header>
+
+<nav id="tabs" role="tablist"></nav>
+
+<div id="body">
+  <aside id="sidebar"></aside>
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="overlay">
+      <div class="ov-card">
+        <div class="ov-title">Processing NeTEx export…</div>
+        <div class="ov-sub" id="ov-sub">Scanning the file</div>
+        <div class="ov-bar"><div class="ov-bar-fill" id="ov-fill"></div></div>
+        <div class="ov-stats" id="ov-stats">0%</div>
+      </div>
+    </div>
+    <div id="empty-hint">
+      <div>
+        <h2>No data loaded</h2>
+        <p>Load the NeTEx export (or download the latest) to begin. One file feeds every tab.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin="anonymous"></script>
+<script>
+(function () {
+'use strict';
+
+// ── config.js ────────────────────────────────────────────────────────────────
+
+const CONFIG = {
+  exportUrl:    'https://storage.googleapis.com/marduk-production/tiamat/Current_latest.zip',
+  chunkSize:    4 * 1024 * 1024,
+  nsrStopUrl:   'https://stoppested.entur.org/{id}',
+  nsrGroupUrl:  'https://stoppested.entur.org/group/{id}',
+  nsrLinkLabel: 'NSR',
+  tools: {
+    overview: true,
+    altnames: true,
+    tags:     true,
+    gosp:     true,
+  },
+};
+
+const THEME = {
+  primary:      '#6f42c1',
+  primaryDark:  '#59359a',
+  primaryLight: '#b89be0',
+  accent:       '#0d6efd',
+  accentMuted:  '#0d6efd33',
+  accentHover:  '#0d6efd18',
+  headerBg:     '#1c1c2e',
+  sidebarBg:    '#f5f5f7',
+  disabledBg:   '#555',
+  border:       '#d0d0d0',
+  ok:           '#198754',
+  warn:         '#fd7e14',
+  danger:       '#e63946',
+  typeColors: {
+    alias:       '#0d6efd',
+    translation: '#fd7e14',
+    label:       '#20c997',
+    copy:        '#6f42c1',
+    other:       '#adb5bd',
+  },
+};
+
+function applyTheme(t) {
+  t = t || THEME;
+  const s = document.documentElement.style;
+  const set = (k, v) => s.setProperty(k, v);
+  set('--c-primary', t.primary);
+  set('--c-primary-dark', t.primaryDark);
+  set('--c-primary-light', t.primaryLight);
+  set('--c-accent', t.accent);
+  set('--c-accent-muted', t.accentMuted);
+  set('--c-accent-hover', t.accentHover);
+  set('--c-header-bg', t.headerBg);
+  set('--c-sidebar-bg', t.sidebarBg);
+  set('--c-disabled-bg', t.disabledBg);
+  set('--c-border', t.border);
+  set('--c-ok', t.ok);
+  set('--c-warn', t.warn);
+  set('--c-danger', t.danger);
+}
+
+// ── util.js ──────────────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return (s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function decodeEntities(s) {
+  return (s || '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function stripCombining(s) {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x0300 || c > 0x036F) out += s[i];
+  }
+  return out;
+}
+
+function norm(s) {
+  const folded = (s || '').toLowerCase()
+    .replace(/ø/g, 'o').replace(/å/g, 'a').replace(/æ/g, 'ae')
+    .normalize('NFD');
+  return stripCombining(folded).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function normLite(s) {
+  return (s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function tokenize(s) { return norm(s).split(' ').filter(Boolean); }
+function consonants(s) { return norm(s).replace(/\s/g, '').replace(/[aeiouy]/g, ''); }
+
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let cur = new Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    const tmp = prev; prev = cur; cur = tmp;
+  }
+  return prev[n];
+}
+function editSim(a, b) {
+  const ml = Math.max(a.length, b.length);
+  return ml ? 1 - levenshtein(a, b) / ml : 1;
+}
+function lcsLen(a, b) {
+  if (!a.length || !b.length) return 0;
+  let best = 0;
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) {
+      if (a[i - 1] === b[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) best = cur[j]; }
+    }
+    prev = cur;
+  }
+  return best;
+}
+function jaccard(aTokens, bTokens) {
+  const A = new Set(aTokens), B = new Set(bTokens);
+  if (!A.size && !B.size) return 1;
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+function noisyOr(values) { return 1 - values.reduce((p, v) => p * (1 - v), 1); }
+
+function confColor(c) {
+  const hue = Math.round((1 - Math.max(0, Math.min(1, c))) * 120);
+  return 'hsl(' + hue + ', 65%, 44%)';
+}
+
+function debounce(fn, ms) {
+  let t;
+  return function() {
+    const args = arguments;
+    clearTimeout(t);
+    t = setTimeout(function() { fn.apply(null, args); }, ms);
+  };
+}
+
+function directChild(el, tag) {
+  for (const c of el.children) if (c.tagName === tag) return c;
+  return null;
+}
+function tagText(el, tag) {
+  const n = el.getElementsByTagName(tag)[0];
+  return n ? n.textContent : null;
+}
+
+function fmtDate(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function daysBetween(laterMs, earlierMs) {
+  return Math.floor((laterMs - earlierMs) / 86400000);
+}
+
+// ── parse.js ─────────────────────────────────────────────────────────────────
+
+const PARSER = new DOMParser();
+let OPTS = { alts: true, tags: true, gosp: true };
+
+const BLOCKS = [
+  { open: /<StopPlace[\s>]/,         close: '</StopPlace>',         handle: parseStop },
+  { open: /<GroupOfStopPlaces[\s>]/, close: '</GroupOfStopPlaces>', handle: parseGosp },
+  { open: /<TopographicPlace[\s>]/,  close: '</TopographicPlace>',  handle: parseTopo },
+];
+
+function newModel() {
+  return {
+    publishedAt: null,
+    topo:  new Map(),
+    stops: new Map(),
+    gosps: [],
+  };
+}
+
+async function parseNetex(file, onProgress, opts) {
+  OPTS = Object.assign({ alts: true, tags: true, gosp: true }, opts || {});
+  const model = newModel();
+  const decoder = new TextDecoder('utf-8');
+  let offset = 0, buffer = '', gotTs = false;
+
+  while (offset < file.size) {
+    const end = Math.min(offset + CONFIG.chunkSize, file.size);
+    const ab = await file.slice(offset, end).arrayBuffer();
+    offset = end;
+    buffer += decoder.decode(ab, { stream: true });
+    if (!gotTs) {
+      const m = /<PublicationTimestamp>([^<]+)/.exec(buffer);
+      if (m) { model.publishedAt = m[1]; gotTs = true; }
+    }
+    buffer = drain(buffer, model, false);
+    if (onProgress) onProgress(offset / file.size, model);
+    await new Promise(function(r) { setTimeout(r); });
+  }
+  buffer += decoder.decode();
+  drain(buffer, model, true);
+  return model;
+}
+
+function parseString(text, opts) {
+  OPTS = Object.assign({ alts: true, tags: true, gosp: true }, opts || {});
+  const model = newModel();
+  const m = /<PublicationTimestamp>([^<]+)/.exec(text);
+  if (m) model.publishedAt = m[1];
+  drain(text, model, true);
+  return model;
+}
+
+function earliestOpen(buffer) {
+  let best = null;
+  for (const b of BLOCKS) {
+    const m = b.open.exec(buffer);
+    if (m && (best === null || m.index < best.idx)) best = { idx: m.index, b };
+  }
+  return best;
+}
+
+function drain(buffer, model, final) {
+  while (true) {
+    const hit = earliestOpen(buffer);
+    if (!hit) return final ? '' : buffer.slice(Math.max(0, buffer.length - 24));
+    const start = hit.idx;
+    const closeIdx = buffer.indexOf(hit.b.close, start);
+    if (closeIdx === -1) return final ? '' : buffer.slice(start);
+    const end = closeIdx + hit.b.close.length;
+    try { hit.b.handle(buffer.slice(start, end), model); } catch (_) {}
+    buffer = buffer.slice(end);
+  }
+}
+
+function parseTopo(block, model) {
+  const idM = /\sid="([^"]+)"/.exec(block);
+  if (!idM) return;
+  const id = idM[1];
+  const type = ((/<TopographicPlaceType>([^<]+)/.exec(block) || [])[1] || '').trim();
+  const name = decodeEntities(((/<Descriptor>\s*<Name[^>]*>([^<]+)/.exec(block) || [])[1] || '')).trim();
+  const parentRef = (/<ParentTopographicPlaceRef ref="([^"]+)"/.exec(block) || [])[1] || null;
+  const countryRef = (/<CountryRef ref="([^"]+)"/.exec(block) || [])[1] || null;
+  model.topo.set(id, { ref: id, name, type, parentRef, countryRef });
+}
+
+function coordOf(parent) {
+  const cen = directChild(parent, 'Centroid');
+  if (!cen) return null;
+  const lat = parseFloat(tagText(cen, 'Latitude'));
+  const lon = parseFloat(tagText(cen, 'Longitude'));
+  return (Number.isFinite(lat) && Number.isFinite(lon)) ? [lat, lon] : null;
+}
+
+function parseGosp(block, model) {
+  if (!OPTS.gosp) return;
+  const doc = PARSER.parseFromString(block, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return;
+  const g = doc.documentElement;
+  if (!g || g.tagName !== 'GroupOfStopPlaces') return;
+  const id = g.getAttribute('id');
+  if (!id) return;
+  const nameEl = directChild(g, 'Name');
+  const memberRefs = [];
+  const mem = directChild(g, 'members');
+  if (mem) for (const r of mem.children) {
+    if (r.tagName === 'StopPlaceRef') { const ref = r.getAttribute('ref'); if (ref) memberRefs.push(ref); }
+  }
+  model.gosps.push({
+    id,
+    name: nameEl ? nameEl.textContent.trim() : id,
+    purpose: (directChild(g, 'PurposeOfGroupingRef') || { getAttribute: function() { return null; } }).getAttribute('ref') || null,
+    centroid: coordOf(g),
+    memberRefs,
+  });
+}
+
+function parseStop(block, model) {
+  const doc = PARSER.parseFromString(block, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return;
+  const sp = doc.documentElement;
+  if (!sp || sp.tagName !== 'StopPlace') return;
+  const id = sp.getAttribute('id');
+  if (!id) return;
+
+  const nameEl = directChild(sp, 'Name');
+  const name = nameEl ? nameEl.textContent.trim() : id;
+  const lang = nameEl ? (nameEl.getAttribute('lang') || '') : '';
+  const topoRefEl = directChild(sp, 'TopographicPlaceRef');
+  const topoRef = topoRefEl ? topoRefEl.getAttribute('ref') : null;
+  const parentRefEl = directChild(sp, 'ParentSiteRef');
+  const parentRef = parentRefEl ? parentRefEl.getAttribute('ref') : null;
+
+  let isParent = false;
+  const tagsByIdx = {};
+  const kl = directChild(sp, 'keyList');
+  if (kl) for (const kv of kl.children) {
+    if (kv.tagName !== 'KeyValue') continue;
+    const k = (tagText(kv, 'Key') || '');
+    if (k === 'IS_PARENT_STOP_PLACE') {
+      const valEl = kv.getElementsByTagName('Value')[0];
+      isParent = (valEl ? valEl.textContent : '').trim() === 'true';
+      continue;
+    }
+    if (!OPTS.tags) continue;
+    const m = /^TAG-(\d+)-(\w+)$/.exec(k);
+    if (m) {
+      if (!tagsByIdx[m[1]]) tagsByIdx[m[1]] = {};
+      const valEl = kv.getElementsByTagName('Value')[0];
+      tagsByIdx[m[1]][m[2]] = valEl ? valEl.textContent : '';
+    }
+  }
+
+  const toDateRaw = tagText(sp, 'ToDate') || tagText(sp, 'toDate') || null;
+  const expired = !!(toDateRaw && new Date(toDateRaw) < new Date());
+
+  const alts = [];
+  const ac = OPTS.alts ? directChild(sp, 'alternativeNames') : null;
+  if (ac) for (const an of ac.children) {
+    if (an.tagName !== 'AlternativeName') continue;
+    const nm = an.getElementsByTagName('Name')[0];
+    const raw = nm ? (nm.textContent || '') : '';
+    alts.push({
+      type: (tagText(an, 'NameType') || 'other').trim(),
+      name: raw.trim(),
+      raw,
+      lang: nm ? (nm.getAttribute('lang') || '') : '',
+    });
+  }
+
+  const tags = Object.values(tagsByIdx).map(function(t) {
+    return {
+      name: (t.name || '').trim(),
+      comment: (t.comment || '').trim(),
+      created: t.created ? Number(t.created) : null,
+      removed: t.removed ? Number(t.removed) : null,
+      idReference: t.idReference || '',
+    };
+  }).filter(function(t) { return t.name || t.comment; });
+
+  model.stops.set(id, { id, name, lang, coord: coordOf(sp), topoRef, parentRef, isParent, toDateRaw, expired, alts, tags });
+}
+
+// ── region.js ────────────────────────────────────────────────────────────────
+
+function resolveRegions(model) {
+  for (const s of model.stops.values()) {
+    let muni = null, county = null, cur = s.topoRef ? model.topo.get(s.topoRef) : null, guard = 0;
+    while (cur && guard++ < 6) {
+      if (!muni && cur.type === 'municipality') muni = cur;
+      if (!county && cur.type === 'county') county = cur;
+      cur = cur.parentRef ? model.topo.get(cur.parentRef) : null;
+    }
+    s.muni = muni ? { ref: muni.ref, name: muni.name } : null;
+    s.county = county ? { ref: county.ref, name: county.name } : null;
+  }
+
+  const counties = new Map();
+  let unknown = 0;
+  for (const s of model.stops.values()) {
+    if (!s.county) { unknown++; continue; }
+    let c = counties.get(s.county.ref);
+    if (!c) { c = { ref: s.county.ref, name: s.county.name, count: 0, munis: new Map() }; counties.set(c.ref, c); }
+    c.count++;
+    if (s.muni) {
+      let m = c.munis.get(s.muni.ref);
+      if (!m) { m = { ref: s.muni.ref, name: s.muni.name, count: 0 }; c.munis.set(m.ref, m); }
+      m.count++;
+    }
+  }
+  const byName = (a, b) => a.name.localeCompare(b.name, 'no');
+  const countyList = Array.from(counties.values())
+    .map(function(c) { return { ref: c.ref, name: c.name, count: c.count, munis: Array.from(c.munis.values()).sort(byName) }; })
+    .sort(byName);
+
+  return { countyList, unknown };
+}
+
+function createRegionFilter() {
+  let county = '', muni = '';
+  return {
+    set: function(c, m) { county = c; muni = m; },
+    get: function() { return { county, muni }; },
+    active: function() { return !!(county || muni); },
+    matches: function(stop) {
+      if (muni) return !!stop.muni && stop.muni.ref === muni;
+      if (county) return !!stop.county && stop.county.ref === county;
+      return true;
+    },
+  };
+}
+
+// ── map.js ───────────────────────────────────────────────────────────────────
+
+const BACKGROUNDS = {
+  'Positron (pale)': {
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    opts: { subdomains: 'abcd', maxZoom: 19, attribution: 'OpenStreetMap, CARTO' },
+  },
+  'OpenStreetMap': {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    opts: { maxZoom: 19, attribution: 'OpenStreetMap contributors' },
+  },
+};
+
+function createMap(elId) {
+  const map = L.map(elId, { preferCanvas: true }).setView([64.5, 16.5], 5);
+  const layers = {};
+  for (const name of Object.keys(BACKGROUNDS)) {
+    const def = BACKGROUNDS[name];
+    layers[name] = L.tileLayer(def.url, def.opts);
+  }
+  let current = Object.keys(BACKGROUNDS)[0];
+  layers[current].addTo(map);
+
+  return {
+    map,
+    backgrounds: Object.keys(BACKGROUNDS),
+    setBackground: function(name) {
+      if (!layers[name] || name === current) return;
+      map.removeLayer(layers[current]);
+      layers[name].addTo(map);
+      current = name;
+    },
+    fit: function(coords) {
+      const pts = coords.filter(Boolean);
+      if (pts.length === 1) map.setView(pts[0], 13);
+      else if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40] });
+    },
+  };
+}
+
+// ── tools/overview.js ────────────────────────────────────────────────────────
+
+const overview = {
+  id: 'overview',
+  label: 'Overview',
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    ctx.pane.innerHTML =
+      '<div class="pane-top"><div class="pane-title">'
+      + '<span>Overview</span><span class="pane-count" id="ov-region">All regions</span></div></div>'
+      + '<div class="pane-list" id="ov-body"></div>';
+  },
+
+  render: function() {
+    const ctx = this.ctx;
+    const model = ctx.model, regions = ctx.regions, region = ctx.region, setRegion = ctx.setRegion;
+    const sel = region.get();
+
+    let nStops = 0, nAlt = 0, nTag = 0;
+    for (const s of model.stops.values()) {
+      if (!region.matches(s)) continue;
+      nStops++;
+      if (s.alts.length) nAlt++;
+      if (s.tags.some(function(t) { return !t.removed; })) nTag++;
+    }
+    let nGosp = 0;
+    for (const g of model.gosps) {
+      if (g.memberRefs.some(function(r) { const st = model.stops.get(r); return st && region.matches(st); })) nGosp++;
+    }
+
+    const county = sel.county ? regions.countyList.find(function(c) { return c.ref === sel.county; }) : null;
+    const muni = county && sel.muni ? county.munis.find(function(m) { return m.ref === sel.muni; }) : null;
+    ctx.pane.querySelector('#ov-region').textContent =
+      muni ? muni.name : county ? county.name : 'All regions';
+
+    const card = function(n, l) {
+      return '<div class="stat-card"><div class="stat-num">' + n.toLocaleString() + '</div><div class="stat-lbl">' + escHtml(l) + '</div></div>';
+    };
+    const t = CONFIG.tools || {};
+    const cards = '<div class="stat-grid">' + card(nStops, 'stops in region')
+      + (t.gosp !== false ? card(nGosp, 'groups of stops') : '')
+      + (t.altnames !== false ? card(nAlt, 'with alt-names') : '')
+      + (t.tags !== false ? card(nTag, 'with open tags') : '')
+      + '</div>';
+
+    let rows, head, kind;
+    if (!county) { rows = regions.countyList; head = 'County'; kind = 'county'; }
+    else { rows = county.munis; head = 'Municipality in ' + county.name; kind = 'muni'; }
+    const table = !rows.length ? '' :
+      '<table class="region-table"><thead><tr><th>' + escHtml(head) + '</th><th class="num">Stops</th></tr></thead><tbody>'
+      + rows.map(function(r) {
+        return '<tr class="click" data-kind="' + kind + '" data-ref="' + escHtml(r.ref) + '">'
+          + '<td>' + escHtml(r.name) + '</td><td class="num">' + r.count.toLocaleString() + '</td></tr>';
+      }).join('')
+      + '</tbody></table>';
+
+    const body = ctx.pane.querySelector('#ov-body');
+    body.innerHTML = cards + table;
+    body.querySelectorAll('tr.click').forEach(function(tr) {
+      tr.addEventListener('click', function() {
+        if (tr.dataset.kind === 'county') setRegion(tr.dataset.ref, '');
+        else setRegion(sel.county, tr.dataset.ref);
+      });
+    });
+  },
+};
+
+// ── tools/altnames.js ────────────────────────────────────────────────────────
+
+const AN_RULES = {
+  fuzzyPrefixLength: 2,
+  fuzzyAutoEdits: function(len) { return len <= 2 ? 0 : len <= 5 ? 1 : 2; },
+  genericWords: new Set([
+    'stasjon', 'rutebilstasjon', 'busstasjon', 'bussterminal', 'terminal',
+    'holdeplass', 'hpl', 'kai', 'ferjekai', 'fergekai', 'brygge', 'kaia',
+    'perrong', 'plattform', 'spor',
+  ]),
+  highConfidence: 0.6,
+};
+const TYPE_ORDER = ['alias', 'translation', 'label', 'copy', 'other'];
+const typeColor = function(t) { return THEME.typeColors[t] || THEME.typeColors.other; };
+const orderTypes = function(types) {
+  return Array.from(types).sort(function(a, b) {
+    const ia = TYPE_ORDER.indexOf(a), ib = TYPE_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+};
+
+function anTokenReachable(aliasTok, nameTok) {
+  if (aliasTok === nameTok) return true;
+  const p = AN_RULES.fuzzyPrefixLength;
+  if (aliasTok.slice(0, p) !== nameTok.slice(0, p)) return false;
+  return levenshtein(aliasTok, nameTok) <= AN_RULES.fuzzyAutoEdits(aliasTok.length);
+}
+function scoreUseless(name, alt) {
+  const nName = normLite(name), nAlt = normLite(alt);
+  if (!nAlt) return 0;
+  if (nAlt === nName) return 1;
+  const nameToks = nName.split(' ').filter(Boolean);
+  const aliasToks = nAlt.split(' ').filter(Boolean);
+  if (!aliasToks.length || !nameToks.length) return 0;
+  let reachable = 0;
+  for (const at of aliasToks) {
+    if (AN_RULES.genericWords.has(at) || nameToks.some(function(nt) { return anTokenReachable(at, nt); })) reachable++;
+  }
+  return reachable / aliasToks.length;
+}
+function scoreUnhelpful(name, alt) {
+  const nName = norm(name), nAlt = norm(alt);
+  if (!nName || !nAlt) return 0;
+  const cs = 1 - levenshtein(consonants(name), consonants(alt)) / Math.max(consonants(name).length, consonants(alt).length || 1);
+  const lcs = lcsLen(nName, nAlt) / Math.min(nName.length, nAlt.length);
+  const jac = jaccard(nName.split(' ').filter(Boolean), nAlt.split(' ').filter(Boolean));
+  return Math.max(0, 1 - Math.max(cs, lcs, jac));
+}
+function malformedFlags(raw) {
+  const s = raw == null ? '' : raw;
+  if (s.trim() === '') return ['empty'];
+  const flags = [];
+  if (s !== s.trim()) flags.push('leading/trailing space');
+  if (/\s{2,}/.test(s)) flags.push('double space');
+  let ctrl = false, invis = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 32) ctrl = true;
+    else if (c === 0x00A0 || c === 0xFEFF || (c >= 0x200B && c <= 0x200F)) invis = true;
+  }
+  if (ctrl) flags.push('control char');
+  if (invis) flags.push('invisible char');
+  if (/^\d+$/.test(s.trim())) flags.push('numeric only');
+  return flags;
+}
+
+function polar(cx, cy, r, a) { return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
+function pieSlice(cx, cy, r, a0, a1, color) {
+  const p0 = polar(cx, cy, r, a0), p1 = polar(cx, cy, r, a1);
+  const large = (a1 - a0) > Math.PI ? 1 : 0;
+  return '<path d="M ' + cx + ' ' + cy + ' L ' + p0[0].toFixed(2) + ' ' + p0[1].toFixed(2) + ' A ' + r + ' ' + r + ' 0 ' + large + ' 1 ' + p1[0].toFixed(2) + ' ' + p1[1].toFixed(2) + ' Z" fill="' + color + '"/>';
+}
+function pieSvg(types, r, strokeW, stroke) {
+  const size = r * 2 + strokeW * 2 + 2, c = size / 2;
+  let inner;
+  if (types.length === 1) inner = '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="' + typeColor(types[0]) + '"/>';
+  else {
+    const step = (2 * Math.PI) / types.length; let a = -Math.PI / 2; inner = '';
+    for (const t of types) { inner += pieSlice(c, c, r, a, a + step, typeColor(t)); a += step; }
+  }
+  return { size, svg: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg">' + inner + '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="none" stroke="' + stroke + '" stroke-width="' + strokeW + '"/></svg>' };
+}
+function pieDot(types) { return '<span class="si-dot">' + pieSvg(types, 7, 1, 'rgba(0,0,0,0.35)').svg + '</span>'; }
+function anMakeIcon(svg, size, active) {
+  return L.divIcon({ className: '', html: svg, iconSize: [size, size], iconAnchor: [size / 2, size / 2], zIndexOffset: active ? 1000 : 0 });
+}
+function anStopIcon(item, active, mode) {
+  const r = active ? 11 : 8, sw = active ? 2.5 : 1.5;
+  if (mode === 'issue') {
+    const size = r * 2 + sw * 2 + 4, c = size / 2;
+    const fill = item.confidence > 0 ? confColor(item.confidence) : '#c2c6cc';
+    const stroke = item.flagged ? '#1a1a2e' : 'rgba(0,0,0,0.3)';
+    return anMakeIcon('<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg"><circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (item.flagged ? sw + 1 : sw) + '"/></svg>', size, active);
+  }
+  const ps = pieSvg(item.types, r, sw, active ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.4)');
+  return anMakeIcon(ps.svg, ps.size, active);
+}
+
+const warmColor = function(v) { return v < 0.04 ? '#c7c9ce' : 'hsl(' + Math.round(48 - 48 * Math.min(1, v)) + ', 85%, 52%)'; };
+const coolColor = function(v) { return v < 0.04 ? '#c7c9ce' : 'hsl(' + Math.round(205 + 70 * Math.min(1, v)) + ', 60%, 52%)'; };
+function ratingGlyph(ev) {
+  const W = 16, H = 26, MID = 13, MAX = 11, x = 5, bw = 6;
+  const up = Math.round(ev.unhelpful * MAX), dn = Math.round(ev.useless * MAX);
+  return '<svg class="rg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">'
+    + '<line x1="2" y1="' + MID + '" x2="' + (W - 2) + '" y2="' + MID + '" stroke="#dcdde1" stroke-width="1"/>'
+    + (up ? '<rect x="' + x + '" y="' + (MID - up) + '" width="' + bw + '" height="' + up + '" rx="1" fill="' + warmColor(ev.unhelpful) + '"/>' : '')
+    + (dn ? '<rect x="' + x + '" y="' + (MID + 1) + '" width="' + bw + '" height="' + dn + '" rx="1" fill="' + coolColor(ev.useless) + '"/>' : '')
+    + '</svg>';
+}
+function ratingTitle(ev) {
+  const u = Math.round(ev.useless * 100), h = Math.round(ev.unhelpful * 100), t = Math.round(ev.confidence * 100);
+  const uTxt = u >= 99 ? 'identical to the stop name (dropped at import)' : u > 0 ? 'largely reachable from the stop name by the geocoder fuzzy match' : 'not reachable from the name - adds a distinct spelling';
+  const hTxt = h >= 60 ? 'shares little with the stop name; may return the wrong stop' : h > 0 ? 'somewhat different from the stop name' : 'closely related to the stop name';
+  return 'Issue confidence ' + t + '%\n  down  useless ' + u + '% - ' + uTxt + '\n  up    unhelpful ' + h + '% - ' + hTxt;
+}
+
+function groupByType(alts) {
+  const by = {};
+  for (const a of alts) { if (!by[a.type]) by[a.type] = []; by[a.type].push(a); }
+  return orderTypes(Object.keys(by)).map(function(t) { return { type: t, names: by[t] }; });
+}
+function flagsHtml(ev) {
+  let h = '';
+  for (const m of ev.malformed) h += '<span class="alt-flag mal" title="MALFORMED">' + escHtml(m) + '</span>';
+  if (ev.collision.length) {
+    const list = ev.collision.slice(0, 4).map(function(e) { return escHtml(e.raw); }).join(', ');
+    h += '<span class="alt-flag col" title="Same-municipality name collision: ' + list + '">collision x' + ev.collision.length + '</span>';
+  }
+  return h;
+}
+function breakdownHtml(item) {
+  return groupByType(item.alts).map(function(g) {
+    const type = g.type, names = g.names;
+    const lines = names.map(function(a) {
+      const ev = a.eval, lang = a.lang ? '<span class="si-lang">(' + escHtml(a.lang) + ')</span>' : '';
+      const rating = a.type === 'alias'
+        ? '<span class="alt-rating" title="' + escHtml(ratingTitle(ev)) + '">' + ratingGlyph(ev) + '<span class="alt-pct">' + Math.round(ev.confidence * 100) + '%</span></span>'
+        : '';
+      return '<div class="alt-line">' + rating + '<span class="si-alt-name">' + escHtml(a.name) + '</span>' + lang + flagsHtml(ev) + '</div>';
+    }).join('');
+    return '<div class="si-alt"><span class="si-type-tag" style="background:' + typeColor(type) + '">' + escHtml(type) + '</span><div class="alt-lines">' + lines + '</div></div>';
+  }).join('');
+}
+
+const altnames = {
+  id: 'altnames',
+  label: 'AlternativeNames',
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    this.typeF = new Set(); this.langF = new Set(); this.issueF = new Set();
+    this.sort = 'confidence'; this.mapMode = 'type'; this.activeId = null; this._regionKey = null;
+    this.markers = new Map();
+
+    const idx = new Map();
+    const add = function(muniRef, name, id, raw) {
+      if (!muniRef) return; const n = norm(name); if (!n) return;
+      let b = idx.get(muniRef); if (!b) idx.set(muniRef, b = new Map());
+      let arr = b.get(n); if (!arr) b.set(n, arr = []); arr.push({ id, raw });
+    };
+    for (const s of ctx.model.stops.values()) {
+      const mr = s.muni ? s.muni.ref : null;
+      add(mr, s.name, s.id, s.name);
+      for (const a of s.alts) add(mr, a.name, s.id, a.name);
+    }
+
+    this.items = [];
+    for (const s of ctx.model.stops.values()) {
+      if (!s.alts.length) continue;
+      let maxConf = 0, flagged = false;
+      const bucket = idx.get(s.muni ? s.muni.ref : null);
+      const altsEval = s.alts.map(function(a) {
+        const isAlias = a.type === 'alias';
+        const useless = isAlias ? scoreUseless(s.name, a.name) : 0;
+        const unhelpful = isAlias ? scoreUnhelpful(s.name, a.name) : 0;
+        const confidence = noisyOr([useless, unhelpful]);
+        const malformed = malformedFlags(a.raw);
+        const collision = [];
+        const arr = bucket ? bucket.get(norm(a.name)) : null;
+        if (arr) { const seen = new Set(); for (const e of arr) if (e.id !== s.id && !seen.has(e.id)) { seen.add(e.id); collision.push(e); } }
+        if (confidence > maxConf) maxConf = confidence;
+        if (malformed.length || collision.length) flagged = true;
+        return Object.assign({}, a, { eval: { useless, unhelpful, confidence, malformed, collision } });
+      });
+      const types = orderTypes(new Set(altsEval.map(function(a) { return a.type; })));
+      const langs = Array.from(new Set(altsEval.map(function(a) { return a.lang; }).filter(Boolean))).sort();
+      this.items.push({
+        stop: s, alts: altsEval, types, langs, confidence: maxConf, flagged,
+        search: [s.name, s.id].concat(altsEval.map(function(a) { return a.name; })).join(' ').toLowerCase(),
+      });
+    }
+
+    ctx.pane.innerHTML =
+      '<div class="pane-top">'
+      + '<div class="pane-title"><span>Stops with alternative names</span><span class="pane-count" id="an-count">—</span></div>'
+      + '<div id="an-summary"></div>'
+      + '<input id="an-search" type="text" placeholder="Filter by name, ID or alt-name…" autocomplete="off"/>'
+      + '<div class="pane-controls">'
+      + '<label class="ctl">Sort'
+      + '<select id="an-sort">'
+      + '<option value="confidence">Issue confidence</option>'
+      + '<option value="flagged">Flagged first</option>'
+      + '<option value="name">Name</option>'
+      + '</select></label>'
+      + '<div class="map-mode" id="an-mapmode">'
+      + '<button data-mode="type" class="active">Type</button>'
+      + '<button data-mode="issue">Issue</button>'
+      + '</div></div></div>'
+      + '<div class="pane-list" id="an-list"></div>';
+
+    const self = this;
+    ctx.pane.querySelector('#an-search').addEventListener('input', debounce(function() { self.render(); }, 150));
+    ctx.pane.querySelector('#an-sort').addEventListener('change', function(e) { self.sort = e.target.value; self.renderList(); });
+    ctx.pane.querySelector('#an-summary').addEventListener('click', function(e) { self.onCard(e); });
+    ctx.pane.querySelector('#an-mapmode').addEventListener('click', function(e) {
+      const b = e.target.closest('button'); if (!b || b.dataset.mode === self.mapMode) return;
+      self.mapMode = b.dataset.mode;
+      ctx.pane.querySelectorAll('#an-mapmode button').forEach(function(x) { x.classList.toggle('active', x.dataset.mode === self.mapMode); });
+      self.renderMarkers();
+    });
+  },
+
+  onCard: function(e) {
+    const pill = e.target.closest('.sum-pill'); if (!pill) return;
+    const set = pill.dataset.cat === 'type' ? this.typeF : pill.dataset.cat === 'lang' ? this.langF : this.issueF;
+    const v = pill.dataset.val;
+    if (set.has(v)) set.delete(v); else set.add(v);
+    this.render();
+  },
+
+  inRegion: function() {
+    const self = this;
+    return this.items.filter(function(it) { return self.ctx.region.matches(it.stop); });
+  },
+
+  visible: function() {
+    const self = this;
+    const q = this.ctx.pane.querySelector('#an-search').value.toLowerCase();
+    return this.inRegion().filter(function(it) {
+      if (q && !it.search.includes(q)) return false;
+      if (self.typeF.size && !it.types.some(function(t) { return self.typeF.has(t); })) return false;
+      if (self.langF.size && !it.langs.some(function(l) { return self.langF.has(l); })) return false;
+      if (self.issueF.size) {
+        const ok = Array.from(self.issueF).some(function(f) {
+          return (f === 'high' && it.confidence >= AN_RULES.highConfidence)
+            || (f === 'malformed' && it.alts.some(function(a) { return a.eval.malformed.length; }))
+            || (f === 'collision' && it.alts.some(function(a) { return a.eval.collision.length; }));
+        });
+        if (!ok) return false;
+      }
+      return true;
+    });
+  },
+
+  render: function() {
+    this.renderSummary();
+    this.renderList();
+    this.renderMarkers();
+    const key = JSON.stringify(this.ctx.region.get());
+    if (key !== this._regionKey) {
+      this._regionKey = key;
+      const pts = this.visible().map(function(it) { return it.stop.coord; }).filter(Boolean);
+      if (pts.length) this.ctx.map.fit(pts);
+    }
+  },
+
+  renderSummary: function() {
+    const region = this.inRegion();
+    const typeCount = {}, langCount = {};
+    let nHigh = 0, nMal = 0, nCol = 0;
+    for (const it of region) {
+      for (const t of it.types) typeCount[t] = (typeCount[t] || 0) + 1;
+      for (const l of it.langs) langCount[l] = (langCount[l] || 0) + 1;
+      if (it.confidence >= AN_RULES.highConfidence) nHigh++;
+      if (it.alts.some(function(a) { return a.eval.malformed.length; })) nMal++;
+      if (it.alts.some(function(a) { return a.eval.collision.length; })) nCol++;
+    }
+    const self = this;
+    const pill = function(cat, val, label, swatch, count, active) {
+      return '<span class="sum-pill' + (active ? ' active' : '') + '" data-cat="' + cat + '" data-val="' + escHtml(val) + '">'
+        + (swatch ? '<span class="sum-swatch" style="background:' + swatch + '"></span>' : '')
+        + escHtml(label) + ' ' + count.toLocaleString() + '</span>';
+    };
+    const issue = pill('issue', 'high', 'high confidence', confColor(0.8), nHigh, this.issueF.has('high'))
+      + pill('issue', 'malformed', 'malformed', THEME.warn, nMal, this.issueF.has('malformed'))
+      + pill('issue', 'collision', 'collision', THEME.danger, nCol, this.issueF.has('collision'));
+    const types = orderTypes(Object.keys(typeCount)).map(function(t) { return pill('type', t, t, typeColor(t), typeCount[t], self.typeF.has(t)); }).join('');
+    const langs = Object.keys(langCount).sort().map(function(l) { return pill('lang', l, l || '-', null, langCount[l], self.langF.has(l)); }).join('');
+    this.ctx.pane.querySelector('#an-summary').innerHTML =
+      '<div class="sum-label">By issue</div><div class="sum-row">' + issue + '</div>'
+      + '<div class="sum-label">By type</div><div class="sum-row">' + types + '</div>'
+      + '<div class="sum-label">By language</div><div class="sum-row">' + langs + '</div>';
+  },
+
+  sorted: function(items) {
+    const a = items.slice();
+    if (this.sort === 'name') a.sort(function(x, y) { return x.stop.name.localeCompare(y.stop.name, 'no'); });
+    else if (this.sort === 'flagged') a.sort(function(x, y) { return (Number(y.flagged) - Number(x.flagged)) || (y.confidence - x.confidence); });
+    else a.sort(function(x, y) { return y.confidence - x.confidence; });
+    return a;
+  },
+
+  renderList: function() {
+    const vis = this.sorted(this.visible());
+    this.ctx.pane.querySelector('#an-count').textContent = vis.length.toLocaleString() + ' / ' + this.inRegion().length.toLocaleString();
+    const list = this.ctx.pane.querySelector('#an-list');
+    list.innerHTML = '';
+    const CAP = 400;
+    const self = this;
+    vis.slice(0, CAP).forEach(function(it) {
+      const div = document.createElement('div');
+      div.className = 'stop-item' + (it.stop.id === self.activeId ? ' active' : '');
+      div.dataset.id = it.stop.id;
+      const href = CONFIG.nsrStopUrl.replace('{id}', it.stop.id);
+      let safe = '#'; try { if (new URL(href).protocol === 'https:') safe = href; } catch (_) {}
+      div.innerHTML =
+        '<div class="si-name">' + pieDot(it.types) + escHtml(it.stop.name)
+        + '<a class="si-nsr-link" href="' + escHtml(safe) + '" target="_blank" rel="noopener">' + escHtml(CONFIG.nsrLinkLabel) + '</a></div>'
+        + '<div class="si-id">' + escHtml(it.stop.id) + '</div>' + breakdownHtml(it);
+      div.querySelector('.si-nsr-link').addEventListener('click', function(e) { e.stopPropagation(); });
+      div.addEventListener('click', function() { self.select(it, false); });
+      list.appendChild(div);
+    });
+    if (vis.length > CAP) {
+      const m = document.createElement('div');
+      m.className = 'list-more';
+      m.textContent = 'Showing first ' + CAP + ' of ' + vis.length.toLocaleString() + ' — narrow the filter.';
+      list.appendChild(m);
+    }
+  },
+
+  renderMarkers: function() {
+    const layer = this.ctx.layer;
+    const self = this;
+    layer.eachLayer(function(l) { l.off(); }); layer.clearLayers(); this.markers.clear();
+    for (const it of this.visible()) {
+      if (!it.stop.coord) continue;
+      const m = L.marker(it.stop.coord, { icon: anStopIcon(it, it.stop.id === this.activeId, this.mapMode) })
+        .addTo(layer)
+        .bindTooltip(it.stop.name, { direction: 'top', offset: [0, -8] })
+        .bindPopup('<div class="lp"><div class="lp-title">' + escHtml(it.stop.name) + '</div><div class="lp-id">' + escHtml(it.stop.id) + '</div>' + breakdownHtml(it) + '</div>');
+      m.on('click', function() { self.select(it, true); });
+      this.markers.set(it.stop.id, m);
+    }
+  },
+
+  select: function(it, fromMap) {
+    const self = this;
+    const prev = this.activeId;
+    this.activeId = it.stop.id;
+    if (prev && this.markers.has(prev)) { const p = this.items.find(function(x) { return x.stop.id === prev; }); if (p) this.markers.get(prev).setIcon(anStopIcon(p, false, this.mapMode)); }
+    const m = this.markers.get(it.stop.id);
+    if (m) { m.setIcon(anStopIcon(it, true, this.mapMode)); m.setZIndexOffset(1000); }
+    this.ctx.pane.querySelectorAll('.stop-item.active').forEach(function(el) { el.classList.remove('active'); });
+    const row = this.ctx.pane.querySelector('.stop-item[data-id="' + CSS.escape(it.stop.id) + '"]');
+    if (row) { row.classList.add('active'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (it.stop.coord) { if (!fromMap) this.ctx.map.map.setView(it.stop.coord, Math.max(this.ctx.map.map.getZoom(), 13), { animate: true }); if (m) m.openPopup(); }
+  },
+};
+
+// ── tools/tags.js ────────────────────────────────────────────────────────────
+
+const TG_RULES = {
+  ageFullDays: 1095,
+};
+const TG_PALETTE = ['#6f42c1', '#0d6efd', '#fd7e14', '#20c997', '#e83e8c', '#17a2b8', '#fab005', '#495057'];
+
+function tgAgeText(days) {
+  if (days < 1) return 'today';
+  if (days < 60) return days + 'd';
+  if (days < 730) return Math.floor(days / 30.44) + 'mnd';
+  return (days / 365.25).toFixed(1) + 'y';
+}
+
+const tags = {
+  id: 'tags',
+  label: 'Tags',
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    this.nameF = new Set();
+    this.sort = 'oldest';
+    this.activeId = null;
+    this._regionKey = null;
+    this.markers = new Map();
+
+    const now = ctx.model.publishedAt ? Date.parse(ctx.model.publishedAt) : Date.now();
+    this.now = Number.isFinite(now) ? now : Date.now();
+
+    const names = new Set();
+    this.items = [];
+    for (const s of ctx.model.stops.values()) {
+      if (!s.tags.length) continue;
+      const tgTags = s.tags.map(function(t) {
+        const open = !t.removed;
+        const ageDays = t.created ? Math.floor((this.now - t.created) / 86400000) : null;
+        names.add(t.name);
+        return Object.assign({}, t, { open, ageDays });
+      }, this);
+      const openTags = tgTags.filter(function(t) { return t.open; });
+      const oldestOpen = openTags.reduce(function(min, t) { return (t.created && (min === null || t.created < min) ? t.created : min); }, null);
+      const severity = oldestOpen ? Math.min(1, Math.floor((this.now - oldestOpen) / 86400000) / TG_RULES.ageFullDays) : 0;
+      this.items.push({
+        stop: s, tags: tgTags, openTags, oldestOpen, severity,
+        names: new Set(openTags.map(function(t) { return t.name; })),
+        search: [s.name, s.id].concat(tgTags.map(function(t) { return t.name + ' ' + t.comment; })).join(' ').toLowerCase(),
+      });
+    }
+    this.nameColor = {};
+    Array.from(names).sort().forEach(function(n, i) { this.nameColor[n] = TG_PALETTE[i % TG_PALETTE.length]; }, this);
+
+    ctx.pane.innerHTML =
+      '<div class="pane-top">'
+      + '<div class="pane-title"><span>Stops with open tags</span><span class="pane-count" id="tg-count">—</span></div>'
+      + '<div id="tg-stats" class="tg-stats"></div>'
+      + '<div class="sum-label">By tag</div><div class="sum-row" id="tg-names"></div>'
+      + '<input id="tg-search" type="text" placeholder="Filter by name, ID or comment…" autocomplete="off"/>'
+      + '<label class="ctl">Sort'
+      + '<select id="tg-sort">'
+      + '<option value="oldest">Oldest open first</option>'
+      + '<option value="newest">Newest open first</option>'
+      + '<option value="name">Name</option>'
+      + '</select></label></div>'
+      + '<div class="pane-list" id="tg-list"></div>';
+
+    const self = this;
+    ctx.pane.querySelector('#tg-search').addEventListener('input', debounce(function() { self.render(); }, 150));
+    ctx.pane.querySelector('#tg-sort').addEventListener('change', function(e) { self.sort = e.target.value; self.renderList(); });
+    ctx.pane.querySelector('#tg-names').addEventListener('click', function(e) {
+      const pill = e.target.closest('.sum-pill'); if (!pill) return;
+      const v = pill.dataset.val;
+      if (self.nameF.has(v)) self.nameF.delete(v); else self.nameF.add(v);
+      self.render();
+    });
+  },
+
+  inRegion: function() {
+    const self = this;
+    return this.items.filter(function(it) { return it.openTags.length && self.ctx.region.matches(it.stop); });
+  },
+
+  visible: function() {
+    const self = this;
+    const q = this.ctx.pane.querySelector('#tg-search').value.toLowerCase();
+    return this.inRegion().filter(function(it) {
+      if (q && !it.search.includes(q)) return false;
+      if (self.nameF.size && !Array.from(it.names).some(function(n) { return self.nameF.has(n); })) return false;
+      return true;
+    });
+  },
+
+  render: function() {
+    this.renderStats();
+    this.renderList();
+    this.renderMarkers();
+    const key = JSON.stringify(this.ctx.region.get());
+    if (key !== this._regionKey) {
+      this._regionKey = key;
+      const pts = this.visible().map(function(it) { return it.stop.coord; }).filter(Boolean);
+      if (pts.length) this.ctx.map.fit(pts);
+    }
+  },
+
+  renderStats: function() {
+    const region = this.inRegion();
+    let openTags = 0, resolved = 0, oldest = null;
+    const nameCount = {};
+    for (const it of region) {
+      openTags += it.openTags.length;
+      for (const t of it.tags) {
+        if (t.open) { nameCount[t.name] = (nameCount[t.name] || 0) + 1; if (t.created && (oldest === null || t.created < oldest)) oldest = t.created; }
+        else resolved++;
+      }
+    }
+    const oldestDays = oldest ? Math.floor((this.now - oldest) / 86400000) : 0;
+    this.ctx.pane.querySelector('#tg-stats').innerHTML =
+      '<div class="stat-grid compact">'
+      + '<div class="stat-card"><div class="stat-num">' + region.length.toLocaleString() + '</div><div class="stat-lbl">stops, open tags</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + openTags.toLocaleString() + '</div><div class="stat-lbl">open tags</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + tgAgeText(oldestDays) + '</div><div class="stat-lbl">oldest open</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + resolved.toLocaleString() + '</div><div class="stat-lbl">resolved tags</div></div>'
+      + '</div>';
+    const self = this;
+    const pills = Object.keys(nameCount).sort().map(function(n) {
+      return '<span class="sum-pill' + (self.nameF.has(n) ? ' active' : '') + '" data-val="' + escHtml(n) + '">'
+        + '<span class="sum-swatch" style="background:' + self.nameColor[n] + '"></span>' + escHtml(n) + ' ' + nameCount[n].toLocaleString() + '</span>';
+    }).join('');
+    this.ctx.pane.querySelector('#tg-names').innerHTML = pills || '<span class="muted">none</span>';
+  },
+
+  sorted: function(items) {
+    const a = items.slice();
+    if (this.sort === 'name') a.sort(function(x, y) { return x.stop.name.localeCompare(y.stop.name, 'no'); });
+    else if (this.sort === 'newest') a.sort(function(x, y) { return (y.oldestOpen || 0) - (x.oldestOpen || 0); });
+    else a.sort(function(x, y) { return (x.oldestOpen || Infinity) - (y.oldestOpen || Infinity); });
+    return a;
+  },
+
+  tagLineHtml: function(t) {
+    const age = t.ageDays != null ? '<span class="tg-age">' + tgAgeText(t.ageDays) + '</span>' : '';
+    const date = t.created ? '<span class="si-lang">' + fmtDate(t.created) + '</span>' : '';
+    const status = t.open ? '' : '<span class="tg-resolved">resolved ' + (t.removed ? fmtDate(t.removed) : '') + '</span>';
+    return '<div class="tg-line">'
+      + '<span class="tg-name" style="background:' + (this.nameColor[t.name] || '#888') + '">' + escHtml(t.name) + '</span>'
+      + age + date + status
+      + (t.comment ? '<div class="tg-comment">' + escHtml(t.comment) + '</div>' : '')
+      + '</div>';
+  },
+
+  renderList: function() {
+    const vis = this.sorted(this.visible());
+    this.ctx.pane.querySelector('#tg-count').textContent = vis.length.toLocaleString() + ' / ' + this.inRegion().length.toLocaleString();
+    const list = this.ctx.pane.querySelector('#tg-list');
+    list.innerHTML = '';
+    const CAP = 400;
+    const self = this;
+    vis.slice(0, CAP).forEach(function(it) {
+      const div = document.createElement('div');
+      div.className = 'stop-item' + (it.stop.id === self.activeId ? ' active' : '');
+      div.dataset.id = it.stop.id;
+      const href = CONFIG.nsrStopUrl.replace('{id}', it.stop.id);
+      let safe = '#'; try { if (new URL(href).protocol === 'https:') safe = href; } catch (_) {}
+      const tgTagsSorted = it.tags.slice().sort(function(a, b) { return (Number(b.open) - Number(a.open)) || ((a.created || 0) - (b.created || 0)); });
+      div.innerHTML =
+        '<div class="si-name"><span class="tg-dot" style="background:' + confColor(it.severity) + '"></span>' + escHtml(it.stop.name)
+        + '<a class="si-nsr-link" href="' + escHtml(safe) + '" target="_blank" rel="noopener">' + escHtml(CONFIG.nsrLinkLabel) + '</a></div>'
+        + '<div class="si-id">' + escHtml(it.stop.id) + '</div>'
+        + tgTagsSorted.map(function(t) { return self.tagLineHtml(t); }).join('');
+      div.querySelector('.si-nsr-link').addEventListener('click', function(e) { e.stopPropagation(); });
+      div.addEventListener('click', function() { self.select(it, false); });
+      list.appendChild(div);
+    });
+    if (vis.length > CAP) {
+      const m = document.createElement('div'); m.className = 'list-more';
+      m.textContent = 'Showing first ' + CAP + ' of ' + vis.length.toLocaleString() + ' — narrow the filter.';
+      list.appendChild(m);
+    }
+  },
+
+  tgIcon: function(it, active) {
+    const r = active ? 11 : 8, sw = active ? 2.5 : 1.5, size = r * 2 + sw * 2 + 4, c = size / 2;
+    return L.divIcon({
+      className: '', iconSize: [size, size], iconAnchor: [c, c], zIndexOffset: active ? 1000 : 0,
+      html: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg"><circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="' + confColor(it.severity) + '" stroke="' + (active ? '#1a1a2e' : 'rgba(0,0,0,0.35)') + '" stroke-width="' + sw + '"/></svg>',
+    });
+  },
+
+  popupHtml: function(it) {
+    const self = this;
+    return '<div class="lp"><div class="lp-title">' + escHtml(it.stop.name) + '</div><div class="lp-id">' + escHtml(it.stop.id) + '</div>'
+      + it.tags.slice().sort(function(a, b) { return Number(b.open) - Number(a.open); }).map(function(t) { return self.tagLineHtml(t); }).join('') + '</div>';
+  },
+
+  renderMarkers: function() {
+    const layer = this.ctx.layer;
+    const self = this;
+    layer.eachLayer(function(l) { l.off(); }); layer.clearLayers(); this.markers.clear();
+    for (const it of this.visible()) {
+      if (!it.stop.coord) continue;
+      const m = L.marker(it.stop.coord, { icon: self.tgIcon(it, it.stop.id === self.activeId) })
+        .addTo(layer)
+        .bindTooltip(it.stop.name, { direction: 'top', offset: [0, -8] })
+        .bindPopup(self.popupHtml(it));
+      m.on('click', function() { self.select(it, true); });
+      self.markers.set(it.stop.id, m);
+    }
+  },
+
+  select: function(it, fromMap) {
+    const self = this;
+    const prev = this.activeId;
+    this.activeId = it.stop.id;
+    if (prev && this.markers.has(prev)) { const p = this.items.find(function(x) { return x.stop.id === prev; }); if (p) this.markers.get(prev).setIcon(this.tgIcon(p, false)); }
+    const m = this.markers.get(it.stop.id);
+    if (m) { m.setIcon(this.tgIcon(it, true)); m.setZIndexOffset(1000); }
+    this.ctx.pane.querySelectorAll('.stop-item.active').forEach(function(el) { el.classList.remove('active'); });
+    const row = this.ctx.pane.querySelector('.stop-item[data-id="' + CSS.escape(it.stop.id) + '"]');
+    if (row) { row.classList.add('active'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (it.stop.coord) { if (!fromMap) this.ctx.map.map.setView(it.stop.coord, Math.max(this.ctx.map.map.getZoom(), 13), { animate: true }); if (m) m.openPopup(); }
+  },
+};
+
+// ── tools/gosp.js ────────────────────────────────────────────────────────────
+
+const POG_PALETTE = ['#6f42c1', '#0d6efd', '#fd7e14', '#20c997'];
+
+function gospValidate(stop) {
+  const reasons = [];
+  if (!stop) return { ok: false, reasons: ['Member not found in file'] };
+  if (stop.expired) reasons.push('Expired ' + (stop.toDateRaw || '').slice(0, 10));
+  if (!stop.isParent && stop.parentRef) reasons.push('Monomodal child');
+  return { ok: reasons.length === 0, reasons };
+}
+
+const gosp = {
+  id: 'gosp',
+  label: 'GroupOfStopPlaces',
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    this.errorsOnly = false;
+    this.pogF = new Set();
+    this.activeId = null;
+    this._regionKey = null;
+    this.markers = new Map();
+    this.gospLayer = L.layerGroup();
+    this.detailLayer = L.layerGroup();
+    ctx.layer.addLayer(this.gospLayer);
+    ctx.layer.addLayer(this.detailLayer);
+
+    this.items = ctx.model.gosps.map(function(g) {
+      const members = g.memberRefs.map(function(r) { return ctx.model.stops.get(r) || null; });
+      const loaded = members.filter(Boolean);
+      let ok = 0, bad = 0;
+      for (const s of loaded) { if (gospValidate(s).ok) ok++; else bad++; }
+      bad += members.length - loaded.length;
+      return { gosp: g, members, ok, bad, search: [g.name, g.id].join(' ').toLowerCase() };
+    });
+
+    const pogs = Array.from(new Set(ctx.model.gosps.map(function(g) { return g.purpose || '—'; }))).sort();
+    this.pogColor = {};
+    pogs.forEach(function(p, i) { this.pogColor[p] = POG_PALETTE[i % POG_PALETTE.length]; }, this);
+
+    ctx.pane.innerHTML =
+      '<div class="pane-top">'
+      + '<div class="pane-title"><span>Groups of stop places</span><span class="pane-count" id="gs-count">—</span></div>'
+      + '<div class="sum-label">By purpose of grouping</div><div class="sum-row" id="gs-pog"></div>'
+      + '<input id="gs-search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>'
+      + '<button id="gs-errors" class="filter-toggle">⚠ Only groups with problems</button>'
+      + '</div>'
+      + '<div class="pane-list" id="gs-list"></div>';
+
+    const self = this;
+    ctx.pane.querySelector('#gs-search').addEventListener('input', debounce(function() { self.render(); }, 150));
+    ctx.pane.querySelector('#gs-errors').addEventListener('click', function(e) {
+      self.errorsOnly = !self.errorsOnly;
+      e.target.classList.toggle('active', self.errorsOnly);
+      self.render();
+    });
+    ctx.pane.querySelector('#gs-pog').addEventListener('click', function(e) {
+      const pill = e.target.closest('.sum-pill'); if (!pill) return;
+      const v = pill.dataset.val;
+      if (self.pogF.has(v)) self.pogF.delete(v); else self.pogF.add(v);
+      self.render();
+    });
+  },
+
+  matchesRegion: function(it) {
+    if (!this.ctx.region.active()) return true;
+    return it.members.some(function(s) { return s && this.ctx.region.matches(s); }, this);
+  },
+
+  inRegion: function() {
+    const self = this;
+    return this.items.filter(function(it) { return self.matchesRegion(it); });
+  },
+
+  visible: function() {
+    const self = this;
+    const q = this.ctx.pane.querySelector('#gs-search').value.toLowerCase();
+    return this.inRegion().filter(function(it) {
+      if (q && !it.search.includes(q)) return false;
+      if (self.pogF.size && !self.pogF.has(it.gosp.purpose || '—')) return false;
+      if (self.errorsOnly && it.bad === 0) return false;
+      return true;
+    });
+  },
+
+  render: function() {
+    this.renderPog();
+    this.renderList();
+    this.renderGospPins();
+    const key = JSON.stringify(this.ctx.region.get());
+    if (key !== this._regionKey) {
+      this._regionKey = key;
+      this.detailLayer.clearLayers(); this.activeId = null;
+      const pts = this.visible().map(function(it) { return it.gosp.centroid; }).filter(Boolean);
+      if (pts.length) this.ctx.map.fit(pts);
+    }
+  },
+
+  renderPog: function() {
+    const region = this.inRegion();
+    const count = {};
+    for (const it of region) { const p = it.gosp.purpose || '—'; count[p] = (count[p] || 0) + 1; }
+    const self = this;
+    this.ctx.pane.querySelector('#gs-pog').innerHTML = Object.keys(count).sort().map(function(p) {
+      return '<span class="sum-pill' + (self.pogF.has(p) ? ' active' : '') + '" data-val="' + escHtml(p) + '">'
+        + '<span class="sum-swatch" style="background:' + self.pogColor[p] + '"></span>' + escHtml(p) + ' ' + count[p].toLocaleString() + '</span>';
+    }).join('');
+  },
+
+  renderList: function() {
+    const vis = this.visible().sort(function(a, b) { return b.bad - a.bad || a.gosp.name.localeCompare(b.gosp.name, 'no'); });
+    this.ctx.pane.querySelector('#gs-count').textContent = vis.length.toLocaleString() + ' / ' + this.inRegion().length.toLocaleString();
+    const list = this.ctx.pane.querySelector('#gs-list');
+    list.innerHTML = '';
+    const CAP = 400;
+    const self = this;
+    vis.slice(0, CAP).forEach(function(it) {
+      const g = it.gosp;
+      const div = document.createElement('div');
+      div.className = 'stop-item' + (g.id === self.activeId ? ' active' : '');
+      div.dataset.id = g.id;
+      const href = CONFIG.nsrGroupUrl.replace('{id}', g.id);
+      let safe = '#'; try { if (new URL(href).protocol === 'https:') safe = href; } catch (_) {}
+      const missing = it.members.length - it.members.filter(Boolean).length;
+      div.innerHTML =
+        '<div class="si-name"><span class="gi-pog-dot" style="background:' + self.pogColor[g.purpose || '—'] + '"></span>' + escHtml(g.name)
+        + '<a class="si-nsr-link" href="' + escHtml(safe) + '" target="_blank" rel="noopener">' + escHtml(CONFIG.nsrLinkLabel) + '</a></div>'
+        + '<div class="si-id">' + escHtml(g.id) + '</div>'
+        + '<div class="gi-purpose">' + escHtml(g.purpose || '—') + '</div>'
+        + '<div class="gi-stats">'
+        + '<span class="badge b-total">' + it.members.length + ' stops</span>'
+        + (it.ok ? '<span class="badge b-ok">✓ ' + it.ok + '</span>' : '')
+        + (it.bad ? '<span class="badge b-bad">✗ ' + it.bad + '</span>' : '')
+        + (missing ? '<span class="badge b-warn">? ' + missing + '</span>' : '')
+        + '</div>';
+      div.querySelector('.si-nsr-link').addEventListener('click', function(e) { e.stopPropagation(); });
+      div.addEventListener('click', function() { self.select(it); });
+      list.appendChild(div);
+    });
+    if (vis.length > CAP) {
+      const m = document.createElement('div'); m.className = 'list-more';
+      m.textContent = 'Showing first ' + CAP + ' of ' + vis.length.toLocaleString() + ' — narrow the filter.';
+      list.appendChild(m);
+    }
+  },
+
+  gospIcon: function(it, active) {
+    const color = this.pogColor[it.gosp.purpose || '—'];
+    const s = active ? 22 : 16, c = s / 2 + 2, size = s + 4;
+    const bg = active ? color : color + 'cc';
+    const border = active ? '3px solid #fff' : '2px solid rgba(255,255,255,0.85)';
+    return L.divIcon({
+      className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2], zIndexOffset: active ? 1000 : 0,
+      html: '<div style="width:' + s + 'px;height:' + s + 'px;border-radius:50%;background:' + bg + ';border:' + border + ';box-shadow:0 1px 4px rgba(0,0,0,0.4);margin:2px"></div>',
+    });
+  },
+
+  renderGospPins: function() {
+    const self = this;
+    this.gospLayer.eachLayer(function(l) { l.off(); }); this.gospLayer.clearLayers(); this.markers.clear();
+    for (const it of this.visible()) {
+      if (!it.gosp.centroid) continue;
+      const m = L.marker(it.gosp.centroid, { icon: this.gospIcon(it, it.gosp.id === this.activeId) })
+        .addTo(this.gospLayer)
+        .bindTooltip(it.gosp.name, { direction: 'top', offset: [0, -6] });
+      m.on('click', function() { self.select(it); });
+      this.markers.set(it.gosp.id, m);
+    }
+  },
+
+  select: function(it) {
+    const self = this;
+    const g = it.gosp;
+    const prev = this.activeId; this.activeId = g.id;
+    if (prev && this.markers.has(prev)) { const p = this.items.find(function(x) { return x.gosp.id === prev; }); if (p) this.markers.get(prev).setIcon(this.gospIcon(p, false)); }
+    if (this.markers.has(g.id)) this.markers.get(g.id).setIcon(this.gospIcon(it, true));
+
+    this.ctx.pane.querySelectorAll('.stop-item.active').forEach(function(el) { el.classList.remove('active'); });
+    const row = this.ctx.pane.querySelector('.stop-item[data-id="' + CSS.escape(g.id) + '"]');
+    if (row) { row.classList.add('active'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+
+    this.detailLayer.clearLayers();
+    const bounds = g.centroid ? [g.centroid] : [];
+    it.members.forEach(function(s) {
+      if (!s || !s.coord) return;
+      bounds.push(s.coord);
+      const v = gospValidate(s);
+      const color = v.ok ? THEME.ok : THEME.danger;
+      if (g.centroid) L.polyline([g.centroid, s.coord], { color: color, weight: 2.5, opacity: 0.55, dashArray: '7 5' }).addTo(self.detailLayer);
+      L.marker(s.coord, {
+        icon: L.divIcon({ className: '', iconSize: [14, 14], iconAnchor: [7, 7], html: '<div style="width:14px;height:14px;border-radius:50%;background:' + color + ';border:2.5px solid rgba(0,0,0,0.4)"></div>' }),
+      }).addTo(self.detailLayer)
+        .bindPopup('<div class="lp"><div class="lp-title">' + escHtml(s.name) + '</div><div class="lp-id">' + escHtml(s.id) + '</div>'
+          + (v.ok ? '<div class="lp-ok">✓ Approved member</div>' : '<div class="lp-bad">✗ ' + v.reasons.map(escHtml).join(', ') + '</div>') + '</div>');
+    });
+    if (bounds.length > 1) this.ctx.map.map.fitBounds(bounds, { padding: [55, 55], maxZoom: 14 });
+    else if (bounds.length === 1) this.ctx.map.map.setView(bounds[0], 13);
+  },
+};
+
+// ── app.js ───────────────────────────────────────────────────────────────────
+
+const ALL_TOOLS = [overview, altnames, tags, gosp];
+const TOOLS = ALL_TOOLS.filter(function(t) { return CONFIG.tools ? CONFIG.tools[t.id] !== false : true; });
+
+const PARSE_OPTS = {
+  alts: !CONFIG.tools || CONFIG.tools.altnames !== false,
+  tags: !CONFIG.tools || CONFIG.tools.tags !== false,
+  gosp: !CONFIG.tools || CONFIG.tools.gosp !== false,
+};
+
+applyTheme();
+
+const $ = function(id) { return document.getElementById(id); };
+const mapApi = createMap('map');
+const filter = createRegionFilter();
+
+let model = null;
+let regions = null;
+let activeTab = null;
+
+const bgSel = $('map-bg');
+mapApi.backgrounds.forEach(function(name) {
+  const o = document.createElement('option');
+  o.value = name; o.textContent = name;
+  bgSel.appendChild(o);
+});
+bgSel.addEventListener('change', function(e) { mapApi.setBackground(e.target.value); });
+
+$('btn-export').href = CONFIG.exportUrl;
+$('btn-load').addEventListener('click', function() { $('file-input').click(); });
+$('file-input').addEventListener('change', function(e) {
+  const f = e.target.files && e.target.files[0];
+  if (f) loadFile(f);
+  e.target.value = '';
+});
+
+let loading = false;
+async function loadFile(file) {
+  if (loading) return;
+  loading = true;
+  showOverlay(true);
+  $('btn-load').disabled = true;
+  setStatus('Reading ' + file.name + '…');
+  try {
+    model = await parseNetex(file, function(frac, m) { setProgress(frac, m.stops.size); }, PARSE_OPTS);
+    regions = resolveRegions(model);
+    initData(file.name);
+  } catch (err) {
+    console.error('Load error:', err);
+    setStatus('Failed to read the file — see console for details.');
+  } finally {
+    loading = false;
+    showOverlay(false);
+    $('btn-load').disabled = false;
+  }
+}
+
+function initData(fileName) {
+  $('empty-hint').classList.add('hidden');
+
+  const countySel = $('region-county');
+  const muniSel = $('region-muni');
+  countySel.innerHTML = '<option value="">All counties</option>'
+    + regions.countyList.map(function(c) { return '<option value="' + attr(c.ref) + '">' + esc(c.name) + ' (' + c.count + ')</option>'; }).join('');
+  countySel.disabled = false;
+  muniSel.disabled = false;
+  filter.set('', '');
+  syncMuniOptions('');
+
+  countySel.onchange = function() { syncMuniOptions(countySel.value); applyRegion(countySel.value, ''); };
+  muniSel.onchange = function() { applyRegion(countySel.value, muniSel.value); };
+
+  const tabsEl = $('tabs');
+  const sidebar = $('sidebar');
+  tabsEl.innerHTML = '';
+  sidebar.innerHTML = '';
+  activeTab = null;
+  for (const tool of TOOLS) {
+    const pane = document.createElement('div');
+    pane.className = 'tool-pane';
+    pane.dataset.tool = tool.id;
+    sidebar.appendChild(pane);
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.textContent = tool.label;
+    tab.dataset.tool = tool.id;
+    tab.addEventListener('click', function() { activate(tool); });
+    tabsEl.appendChild(tab);
+
+    tool._ctx = {
+      model: model, regions: regions, region: filter, map: mapApi,
+      layer: L.layerGroup(), pane: pane, setRegion: setRegion,
+    };
+    tool._tab = tab;
+    tool.mount(tool._ctx);
+  }
+
+  const total = model.stops.size.toLocaleString();
+  setStatus(fileName + ' — ' + total + ' stops, ' + model.gosps.length.toLocaleString() + ' groups, ' + regions.countyList.length + ' counties');
+  activate(TOOLS[0]);
+}
+
+function syncMuniOptions(countyRef) {
+  const muniSel = $('region-muni');
+  const county = regions.countyList.find(function(c) { return c.ref === countyRef; });
+  const munis = county ? county.munis : [];
+  muniSel.innerHTML = '<option value="">All municipalities</option>'
+    + munis.map(function(m) { return '<option value="' + attr(m.ref) + '">' + esc(m.name) + ' (' + m.count + ')</option>'; }).join('');
+  muniSel.disabled = !county;
+}
+
+function applyRegion(county, muni) {
+  filter.set(county, muni);
+  if (activeTab) activeTab.render();
+}
+
+function setRegion(county, muni) {
+  $('region-county').value = county;
+  syncMuniOptions(county);
+  $('region-muni').value = muni;
+  applyRegion(county, muni);
+}
+
+function activate(tool) {
+  if (activeTab === tool) return;
+  if (activeTab) {
+    activeTab._tab.classList.remove('active');
+    activeTab._ctx.pane.classList.remove('active');
+    mapApi.map.removeLayer(activeTab._ctx.layer);
+  }
+  activeTab = tool;
+  tool._tab.classList.add('active');
+  tool._ctx.pane.classList.add('active');
+  tool._ctx.layer.addTo(mapApi.map);
+  tool.render();
+}
+
+function setStatus(msg) { $('status').textContent = msg; }
+function showOverlay(show) { $('overlay').classList.toggle('show', show); }
+function setProgress(frac, found) {
+  const pct = Math.round(frac * 100);
+  $('ov-fill').style.width = pct + '%';
+  $('ov-stats').textContent = pct + '% · ' + found.toLocaleString() + ' stops';
+}
+function esc(s) { return (s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function attr(s) { return esc(s).replace(/"/g, '&quot;'); }
+
+})();
+</script>
+</body>
+</html>
