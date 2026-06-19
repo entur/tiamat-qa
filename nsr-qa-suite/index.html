@@ -213,6 +213,9 @@ body {
 .b-bad { background: #f8d7da; color: #721c24; }
 .b-warn { background: #fff3cd; color: #5a4200; }
 
+/* ── Untouched / Recent changes ── */
+.rc-new { font-size: 10px; font-weight: 700; color: #fff; background: var(--c-danger); padding: 0 5px; border-radius: 6px; vertical-align: middle; }
+
 /* ── Popups ── */
 .leaflet-popup-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
 .lp { min-width: 220px; max-width: 320px; }
@@ -282,10 +285,12 @@ const CONFIG = {
   nsrGroupUrl:  'https://stoppested.entur.org/group/{id}',
   nsrLinkLabel: 'NSR',
   tools: {
-    overview: true,
-    altnames: true,
-    tags:     true,
-    gosp:     true,
+    overview:      true,
+    altnames:      true,
+    tags:          true,
+    gosp:          true,
+    untouched:     true,
+    recentchanges: true,
   },
 };
 
@@ -309,6 +314,20 @@ const THEME = {
     label:       '#20c997',
     copy:        '#6f42c1',
     other:       '#adb5bd',
+  },
+  modeColors: {
+    bus:        '#e63946',
+    rail:       '#1d3557',
+    tram:       '#2a9d8f',
+    metro:      '#e76f51',
+    water:      '#0d6efd',
+    air:        '#7209b7',
+    coach:      '#fb8500',
+    funicular:  '#6a994e',
+    cableway:   '#9c6644',
+    trolleybus: '#d62828',
+    taxi:       '#fcbf49',
+    other:      '#adb5bd',
   },
 };
 
@@ -464,7 +483,7 @@ function newModel() {
 }
 
 async function parseNetex(file, onProgress, opts) {
-  OPTS = Object.assign({ alts: true, tags: true, gosp: true }, opts || {});
+  OPTS = Object.assign({ alts: true, tags: true, gosp: true, history: true }, opts || {});
   const model = newModel();
   const decoder = new TextDecoder('utf-8');
   let offset = 0, buffer = '', gotTs = false;
@@ -488,7 +507,7 @@ async function parseNetex(file, onProgress, opts) {
 }
 
 function parseString(text, opts) {
-  OPTS = Object.assign({ alts: true, tags: true, gosp: true }, opts || {});
+  OPTS = Object.assign({ alts: true, tags: true, gosp: true, history: true }, opts || {});
   const model = newModel();
   const m = /<PublicationTimestamp>([^<]+)/.exec(text);
   if (m) model.publishedAt = m[1];
@@ -576,7 +595,21 @@ function parseStop(block, model) {
   const parentRefEl = directChild(sp, 'ParentSiteRef');
   const parentRef = parentRefEl ? parentRefEl.getAttribute('ref') : null;
 
+  const version = Number(sp.getAttribute('version')) || null;
+  const created = Date.parse(sp.getAttribute('created') || '') || null;
+  const changed = Date.parse(sp.getAttribute('changed') || '') || null;
+
+  const vb = directChild(sp, 'ValidBetween');
+  const fromDateRaw = vb ? tagText(vb, 'FromDate') : null;
+  const fromDate = fromDateRaw ? (Date.parse(fromDateRaw) || null) : null;
+  const toDateRaw = vb ? tagText(vb, 'ToDate') : null;
+  const expired = !!(toDateRaw && new Date(toDateRaw) < new Date());
+
+  const tmEl = directChild(sp, 'TransportMode');
+  const transportMode = tmEl ? tmEl.textContent.toLowerCase().trim() : '';
+
   let isParent = false;
+  let versionComment = '';
   const tagsByIdx = {};
   const kl = directChild(sp, 'keyList');
   if (kl) for (const kv of kl.children) {
@@ -587,6 +620,11 @@ function parseStop(block, model) {
       isParent = (valEl ? valEl.textContent : '').trim() === 'true';
       continue;
     }
+    if (k === 'VERSION_COMMENT' && OPTS.history) {
+      const valEl = kv.getElementsByTagName('Value')[0];
+      versionComment = valEl ? valEl.textContent.trim() : '';
+      continue;
+    }
     if (!OPTS.tags) continue;
     const m = /^TAG-(\d+)-(\w+)$/.exec(k);
     if (m) {
@@ -595,9 +633,6 @@ function parseStop(block, model) {
       tagsByIdx[m[1]][m[2]] = valEl ? valEl.textContent : '';
     }
   }
-
-  const toDateRaw = tagText(sp, 'ToDate') || tagText(sp, 'toDate') || null;
-  const expired = !!(toDateRaw && new Date(toDateRaw) < new Date());
 
   const alts = [];
   const ac = OPTS.alts ? directChild(sp, 'alternativeNames') : null;
@@ -623,7 +658,7 @@ function parseStop(block, model) {
     };
   }).filter(function(t) { return t.name || t.comment; });
 
-  model.stops.set(id, { id, name, lang, coord: coordOf(sp), topoRef, parentRef, isParent, toDateRaw, expired, alts, tags });
+  model.stops.set(id, { id, name, lang, coord: coordOf(sp), topoRef, parentRef, isParent, toDateRaw, expired, alts, tags, version, created, changed, fromDate, transportMode, versionComment });
 }
 
 // ── region.js ────────────────────────────────────────────────────────────────
@@ -715,6 +750,13 @@ function createMap(elId) {
   };
 }
 
+// ── shared mode helpers ───────────────────────────────────────────────────────
+
+var MODE_ORDER = ['bus','rail','tram','metro','water','air','coach','funicular','cableway','trolleybus','taxi','other'];
+function modeOf(s) { return (s.transportMode && THEME.modeColors[s.transportMode]) ? s.transportMode : 'other'; }
+function modeColor(m) { return THEME.modeColors[m] || THEME.modeColors.other; }
+function orderModes(modes) { return Array.from(modes).sort(function(a,b){ var ia=MODE_ORDER.indexOf(a), ib=MODE_ORDER.indexOf(b); return (ia===-1?99:ia)-(ib===-1?99:ib); }); }
+
 // ── tools/overview.js ────────────────────────────────────────────────────────
 
 const overview = {
@@ -734,12 +776,20 @@ const overview = {
     const model = ctx.model, regions = ctx.regions, region = ctx.region, setRegion = ctx.setRegion;
     const sel = region.get();
 
-    let nStops = 0, nAlt = 0, nTag = 0;
+    let nStops = 0, nAlt = 0, nTag = 0, nUntouched = 0, nRecent = 0;
+    const now30 = model.publishedAt ? Date.parse(model.publishedAt) : Date.now();
     for (const s of model.stops.values()) {
       if (!region.matches(s)) continue;
       nStops++;
       if (s.alts.length) nAlt++;
       if (s.tags.some(function(t) { return !t.removed; })) nTag++;
+      const effMs = s.fromDate != null ? s.fromDate : (s.changed != null ? s.changed : s.created);
+      if (effMs != null) {
+        const d = new Date(effMs);
+        if (d.getUTCFullYear() === 2017 && d.getUTCMonth() === 5) nUntouched++;
+      }
+      const editMs = s.changed != null ? s.changed : (s.fromDate != null ? s.fromDate : s.created);
+      if (editMs != null && Number.isFinite(now30) && (now30 - editMs) <= 30 * 86400000) nRecent++;
     }
     let nGosp = 0;
     for (const g of model.gosps) {
@@ -759,6 +809,8 @@ const overview = {
       + (t.gosp !== false ? card(nGosp, 'groups of stops') : '')
       + (t.altnames !== false ? card(nAlt, 'with alt-names') : '')
       + (t.tags !== false ? card(nTag, 'with open tags') : '')
+      + (t.untouched !== false ? card(nUntouched, 'untouched (2017)') : '')
+      + (t.recentchanges !== false ? card(nRecent, 'changed ≤30d') : '')
       + '</div>';
 
     let rows, head, kind;
@@ -1566,15 +1618,480 @@ const gosp = {
   },
 };
 
+// ── tools/untouched.js ───────────────────────────────────────────────────────
+
+const untouched = {
+  id: 'untouched',
+  label: 'Untouched',
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    this.modeF = new Set();
+    this.sort = 'name';
+    this.activeId = null;
+    this._regionKey = null;
+    this.markers = new Map();
+
+    this.items = [];
+    for (const s of ctx.model.stops.values()) {
+      const effMs = s.fromDate != null ? s.fromDate : (s.changed != null ? s.changed : s.created);
+      if (effMs == null) continue;
+      const d = new Date(effMs);
+      if (!(d.getUTCFullYear() === 2017 && d.getUTCMonth() === 5)) continue;
+      const mode = modeOf(s);
+      this.items.push({
+        stop: s,
+        mode: mode,
+        effDate: effMs,
+        search: (s.name + ' ' + s.id).toLowerCase(),
+      });
+    }
+
+    ctx.pane.innerHTML =
+      '<div class="pane-top">'
+      + '<div class="pane-title"><span>Untouched since launch</span><span class="pane-count" id="un-count">—</span></div>'
+      + '<div id="un-stats"></div>'
+      + '<div class="sum-label">By transport mode</div><div class="sum-row" id="un-modes"></div>'
+      + '<input id="un-search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>'
+      + '<label class="ctl">Sort'
+      + '<select id="un-sort">'
+      + '<option value="name">Name</option>'
+      + '<option value="oldest">Oldest date first</option>'
+      + '<option value="newest">Newest date first</option>'
+      + '</select></label></div>'
+      + '<div class="pane-list" id="un-list"></div>';
+
+    const self = this;
+    ctx.pane.querySelector('#un-search').addEventListener('input', debounce(function() { self.render(); }, 150));
+    ctx.pane.querySelector('#un-sort').addEventListener('change', function(e) { self.sort = e.target.value; self.renderList(); });
+    ctx.pane.querySelector('#un-modes').addEventListener('click', function(e) {
+      const pill = e.target.closest('.sum-pill'); if (!pill) return;
+      const v = pill.dataset.val;
+      if (self.modeF.has(v)) self.modeF.delete(v); else self.modeF.add(v);
+      self.render();
+    });
+  },
+
+  inRegion: function() {
+    const self = this;
+    return this.items.filter(function(it) { return self.ctx.region.matches(it.stop); });
+  },
+
+  visible: function() {
+    const self = this;
+    const q = this.ctx.pane.querySelector('#un-search').value.toLowerCase();
+    return this.inRegion().filter(function(it) {
+      if (q && !it.search.includes(q)) return false;
+      if (self.modeF.size && !self.modeF.has(it.mode)) return false;
+      return true;
+    });
+  },
+
+  render: function() {
+    this.renderStats();
+    this.renderList();
+    this.renderMarkers();
+    const key = JSON.stringify(this.ctx.region.get());
+    if (key !== this._regionKey) {
+      this._regionKey = key;
+      const pts = this.visible().map(function(it) { return it.stop.coord; }).filter(Boolean);
+      if (pts.length) this.ctx.map.fit(pts);
+    }
+  },
+
+  renderStats: function() {
+    const region = this.inRegion();
+    const vis = this.visible();
+    let regionStopCount = 0;
+    for (const s of this.ctx.model.stops.values()) { if (this.ctx.region.matches(s)) regionStopCount++; }
+    const pct = regionStopCount ? Math.round(region.length / regionStopCount * 100) : 0;
+    const modeCount = {};
+    for (const it of region) modeCount[it.mode] = (modeCount[it.mode] || 0) + 1;
+    const self = this;
+    this.ctx.pane.querySelector('#un-stats').innerHTML =
+      '<div class="stat-grid compact">'
+      + '<div class="stat-card"><div class="stat-num">' + vis.length.toLocaleString() + '</div><div class="stat-lbl">untouched stops</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + pct + '%</div><div class="stat-lbl">of region stops</div></div>'
+      + '</div>';
+    const pills = orderModes(Object.keys(modeCount)).map(function(m) {
+      return '<span class="sum-pill' + (self.modeF.has(m) ? ' active' : '') + '" data-val="' + escHtml(m) + '">'
+        + '<span class="sum-swatch" style="background:' + modeColor(m) + '"></span>'
+        + escHtml(m) + ' ' + modeCount[m].toLocaleString() + '</span>';
+    }).join('');
+    this.ctx.pane.querySelector('#un-modes').innerHTML = pills || '<span class="muted">none</span>';
+  },
+
+  sorted: function(items) {
+    const a = items.slice();
+    if (this.sort === 'oldest') a.sort(function(x, y) { return (x.effDate || 0) - (y.effDate || 0); });
+    else if (this.sort === 'newest') a.sort(function(x, y) { return (y.effDate || 0) - (x.effDate || 0); });
+    else a.sort(function(x, y) { return x.stop.name.localeCompare(y.stop.name, 'no'); });
+    return a;
+  },
+
+  unIcon: function(it, active) {
+    const r = active ? 11 : 8, sw = active ? 2.5 : 1.5, size = r * 2 + sw * 2 + 4, c = size / 2;
+    return L.divIcon({
+      className: '', iconSize: [size, size], iconAnchor: [c, c], zIndexOffset: active ? 1000 : 0,
+      html: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg"><circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="' + modeColor(it.mode) + '" stroke="' + (active ? '#1a1a2e' : 'rgba(0,0,0,0.35)') + '" stroke-width="' + sw + '"/></svg>',
+    });
+  },
+
+  popupHtml: function(it) {
+    const s = it.stop;
+    return '<div class="lp"><div class="lp-title">' + escHtml(s.name) + '</div>'
+      + '<div class="lp-id">' + escHtml(s.id) + '</div>'
+      + '<div class="tg-line"><span class="tg-name" style="background:' + modeColor(it.mode) + '">' + escHtml(it.mode) + '</span>'
+      + (s.version ? '<span class="tg-age">v' + s.version + '</span>' : '')
+      + '<span class="si-lang">' + fmtDate(it.effDate) + '</span></div>'
+      + '</div>';
+  },
+
+  renderList: function() {
+    const vis = this.sorted(this.visible());
+    this.ctx.pane.querySelector('#un-count').textContent = vis.length.toLocaleString() + ' / ' + this.inRegion().length.toLocaleString();
+    const list = this.ctx.pane.querySelector('#un-list');
+    list.innerHTML = '';
+    const CAP = 400;
+    const self = this;
+    vis.slice(0, CAP).forEach(function(it) {
+      const s = it.stop;
+      const div = document.createElement('div');
+      div.className = 'stop-item' + (s.id === self.activeId ? ' active' : '');
+      div.dataset.id = s.id;
+      const href = CONFIG.nsrStopUrl.replace('{id}', s.id);
+      let safe = '#'; try { if (new URL(href).protocol === 'https:') safe = href; } catch (_) {}
+      div.innerHTML =
+        '<div class="si-name"><span class="tg-dot" style="background:' + modeColor(it.mode) + '"></span>' + escHtml(s.name)
+        + '<a class="si-nsr-link" href="' + escHtml(safe) + '" target="_blank" rel="noopener">' + escHtml(CONFIG.nsrLinkLabel) + '</a></div>'
+        + '<div class="si-id">' + escHtml(s.id) + '</div>'
+        + '<div class="tg-line"><span class="tg-name" style="background:' + modeColor(it.mode) + '">' + escHtml(it.mode) + '</span>'
+        + (s.version ? '<span class="tg-age">v' + s.version + '</span>' : '')
+        + '<span class="si-lang">' + fmtDate(it.effDate) + '</span></div>';
+      div.querySelector('.si-nsr-link').addEventListener('click', function(e) { e.stopPropagation(); });
+      div.addEventListener('click', function() { self.select(it, false); });
+      list.appendChild(div);
+    });
+    if (vis.length > CAP) {
+      const m = document.createElement('div'); m.className = 'list-more';
+      m.textContent = 'Showing first ' + CAP + ' of ' + vis.length.toLocaleString() + ' — narrow the filter.';
+      list.appendChild(m);
+    }
+  },
+
+  renderMarkers: function() {
+    const layer = this.ctx.layer;
+    const self = this;
+    layer.eachLayer(function(l) { l.off(); }); layer.clearLayers(); this.markers.clear();
+    for (const it of this.visible()) {
+      if (!it.stop.coord) continue;
+      const m = L.marker(it.stop.coord, { icon: self.unIcon(it, it.stop.id === self.activeId) })
+        .addTo(layer)
+        .bindTooltip(it.stop.name, { direction: 'top', offset: [0, -8] })
+        .bindPopup(self.popupHtml(it));
+      m.on('click', function() { self.select(it, true); });
+      self.markers.set(it.stop.id, m);
+    }
+  },
+
+  select: function(it, fromMap) {
+    const self = this;
+    const prev = this.activeId;
+    this.activeId = it.stop.id;
+    if (prev && this.markers.has(prev)) { const p = this.items.find(function(x) { return x.stop.id === prev; }); if (p) this.markers.get(prev).setIcon(this.unIcon(p, false)); }
+    const m = this.markers.get(it.stop.id);
+    if (m) { m.setIcon(this.unIcon(it, true)); m.setZIndexOffset(1000); }
+    this.ctx.pane.querySelectorAll('.stop-item.active').forEach(function(el) { el.classList.remove('active'); });
+    const row = this.ctx.pane.querySelector('.stop-item[data-id="' + CSS.escape(it.stop.id) + '"]');
+    if (row) { row.classList.add('active'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (it.stop.coord) { if (!fromMap) this.ctx.map.map.setView(it.stop.coord, Math.max(this.ctx.map.map.getZoom(), 13), { animate: true }); if (m) m.openPopup(); }
+  },
+};
+
+// ── tools/recentchanges.js ───────────────────────────────────────────────────
+
+function rcAgeText(days) {
+  if (days < 1) return 'today';
+  if (days < 60) return days + 'd';
+  if (days < 730) return Math.floor(days / 30.44) + 'mnd';
+  return (days / 365.25).toFixed(1) + 'y';
+}
+
+const recentchanges = {
+  id: 'recentchanges',
+  label: 'Recent changes',
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    this.modeF = new Set();
+    this.newOnly = false;
+    this.sort = 'recent';
+    this.window = 'month';
+    this.activeId = null;
+    this._regionKey = null;
+    this.markers = new Map();
+    this.windows = [
+      { key: 'week',  label: 'Last week',    days: 7  },
+      { key: 'month', label: 'Last month',   days: 30 },
+      { key: 'q',     label: 'Last 90 days', days: 90 },
+    ];
+
+    const now = ctx.model.publishedAt ? Date.parse(ctx.model.publishedAt) : Date.now();
+    this.now = Number.isFinite(now) ? now : Date.now();
+
+    this.items = [];
+    for (const s of ctx.model.stops.values()) {
+      const editDate = s.changed != null ? s.changed : (s.fromDate != null ? s.fromDate : s.created);
+      if (editDate == null) continue;
+      const mode = modeOf(s);
+      const ageDays = Math.floor((this.now - editDate) / 86400000);
+      this.items.push({
+        stop: s,
+        mode: mode,
+        editDate: editDate,
+        ageDays: ageDays,
+        isNew: s.version === 1,
+        search: (s.name + ' ' + s.id).toLowerCase(),
+      });
+    }
+
+    const winBtns = this.windows.map(function(w) {
+      return '<button data-win="' + w.key + '">' + escHtml(w.label) + '</button>';
+    }).join('');
+
+    ctx.pane.innerHTML =
+      '<div class="pane-top">'
+      + '<div class="pane-title"><span>Recent changes</span><span class="pane-count" id="rc-count">—</span></div>'
+      + '<div class="map-mode" id="rc-window">' + winBtns + '</div>'
+      + '<div id="rc-stats"></div>'
+      + '<div class="sum-label">By transport mode</div><div class="sum-row" id="rc-modes"></div>'
+      + '<input id="rc-search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>'
+      + '<div class="pane-controls">'
+      + '<label class="ctl">Sort'
+      + '<select id="rc-sort">'
+      + '<option value="recent">Most recent first</option>'
+      + '<option value="oldest">Oldest first</option>'
+      + '<option value="name">Name</option>'
+      + '</select></label></div>'
+      + '<button id="rc-newonly" class="filter-toggle">⚠ Only new stops</button>'
+      + '</div>'
+      + '<div class="pane-list" id="rc-list"></div>';
+
+    const self = this;
+    // set initial active window button
+    ctx.pane.querySelectorAll('#rc-window button').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.win === self.window);
+    });
+    ctx.pane.querySelector('#rc-window').addEventListener('click', function(e) {
+      const b = e.target.closest('button'); if (!b) return;
+      self.window = b.dataset.win;
+      ctx.pane.querySelectorAll('#rc-window button').forEach(function(x) { x.classList.toggle('active', x.dataset.win === self.window); });
+      self._regionKey = null; // force refit on window change
+      self.render();
+    });
+    ctx.pane.querySelector('#rc-search').addEventListener('input', debounce(function() { self.render(); }, 150));
+    ctx.pane.querySelector('#rc-sort').addEventListener('change', function(e) { self.sort = e.target.value; self.renderList(); });
+    ctx.pane.querySelector('#rc-newonly').addEventListener('click', function(e) {
+      self.newOnly = !self.newOnly;
+      e.target.classList.toggle('active', self.newOnly);
+      self.render();
+    });
+    ctx.pane.querySelector('#rc-modes').addEventListener('click', function(e) {
+      const pill = e.target.closest('.sum-pill'); if (!pill) return;
+      const v = pill.dataset.val;
+      if (self.modeF.has(v)) self.modeF.delete(v); else self.modeF.add(v);
+      self.render();
+    });
+  },
+
+  windowDays: function() {
+    const w = this.windows.find(function(x) { return x.key === this.window; }, this);
+    return w ? w.days : 30;
+  },
+
+  inRegion: function() {
+    const self = this;
+    const cutoff = this.now - this.windowDays() * 86400000;
+    return this.items.filter(function(it) {
+      return it.editDate >= cutoff && self.ctx.region.matches(it.stop);
+    });
+  },
+
+  visible: function() {
+    const self = this;
+    const q = this.ctx.pane.querySelector('#rc-search').value.toLowerCase();
+    return this.inRegion().filter(function(it) {
+      if (q && !it.search.includes(q)) return false;
+      if (self.modeF.size && !self.modeF.has(it.mode)) return false;
+      if (self.newOnly && !it.isNew) return false;
+      return true;
+    });
+  },
+
+  render: function() {
+    this.renderStats();
+    this.renderList();
+    this.renderMarkers();
+    const key = JSON.stringify([this.ctx.region.get(), this.window]);
+    if (key !== this._regionKey) {
+      this._regionKey = key;
+      const pts = this.visible().map(function(it) { return it.stop.coord; }).filter(Boolean);
+      if (pts.length) this.ctx.map.fit(pts);
+    }
+  },
+
+  renderStats: function() {
+    const region = this.inRegion();
+    let nNew = 0, oldestAge = 0;
+    const modeCount = {};
+    const days = this.windowDays();
+    for (const it of region) {
+      if (it.isNew) nNew++;
+      if (it.ageDays > oldestAge) oldestAge = it.ageDays;
+      modeCount[it.mode] = (modeCount[it.mode] || 0) + 1;
+    }
+    const nModes = Object.keys(modeCount).length;
+    const self = this;
+    this.ctx.pane.querySelector('#rc-stats').innerHTML =
+      '<div class="stat-grid compact">'
+      + '<div class="stat-card"><div class="stat-num">' + region.length.toLocaleString() + '</div><div class="stat-lbl">changed stops</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + nNew.toLocaleString() + '</div><div class="stat-lbl">new stops</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + nModes.toLocaleString() + '</div><div class="stat-lbl">modes</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + rcAgeText(oldestAge) + '</div><div class="stat-lbl">oldest in window</div></div>'
+      + '</div>';
+    const pills = orderModes(Object.keys(modeCount)).map(function(m) {
+      return '<span class="sum-pill' + (self.modeF.has(m) ? ' active' : '') + '" data-val="' + escHtml(m) + '">'
+        + '<span class="sum-swatch" style="background:' + modeColor(m) + '"></span>'
+        + escHtml(m) + ' ' + modeCount[m].toLocaleString() + '</span>';
+    }).join('');
+    this.ctx.pane.querySelector('#rc-modes').innerHTML = pills || '<span class="muted">none</span>';
+  },
+
+  sorted: function(items) {
+    const a = items.slice();
+    if (this.sort === 'name') a.sort(function(x, y) { return x.stop.name.localeCompare(y.stop.name, 'no'); });
+    else if (this.sort === 'oldest') a.sort(function(x, y) { return x.editDate - y.editDate; });
+    else a.sort(function(x, y) { return y.editDate - x.editDate; });
+    return a;
+  },
+
+  rcIcon: function(it, active) {
+    const days = this.windowDays();
+    const frac = Math.min(1, it.ageDays / days);
+    const r = Math.round(11 - 6 * frac) + (active ? 2 : 0);
+    const sw = active ? 2.5 : 1.5;
+    const size = r * 2 + sw * 2 + 4, c = size / 2;
+    const fill = modeColor(it.mode);
+    const stroke = active ? '#1a1a2e' : 'rgba(0,0,0,0.35)';
+    let inner = '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + sw + '"/>';
+    if (it.isNew) {
+      inner += '<text x="' + c + '" y="' + (c + 4) + '" text-anchor="middle" font-size="' + Math.max(8, r) + '" font-weight="bold" fill="#fff" font-family="Arial,sans-serif">!</text>';
+    }
+    return L.divIcon({
+      className: '', iconSize: [size, size], iconAnchor: [c, c],
+      html: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg">' + inner + '</svg>',
+    });
+  },
+
+  // Older = smaller = on top, so old pins stay visible under newer/bigger ones.
+  // zIndexOffset is a MARKER option (ignored on the divIcon); the multiplier is
+  // large enough to dominate Leaflet's latitude-based base z-index for any
+  // realistic cluster, and the active pin sits clear above all of them.
+  rcZOffset: function(it, active) {
+    const frac = Math.min(1, it.ageDays / this.windowDays());
+    const r = Math.round(11 - 6 * frac) + (active ? 2 : 0);
+    const zBase = Math.round((11 - r) * 100000);
+    return active ? zBase + 10000000 : zBase;
+  },
+
+  popupHtml: function(it) {
+    const s = it.stop;
+    return '<div class="lp"><div class="lp-title">' + escHtml(s.name) + (it.isNew ? ' <span class="rc-new">NEW</span>' : '') + '</div>'
+      + '<div class="lp-id">' + escHtml(s.id) + '</div>'
+      + '<div class="tg-line"><span class="tg-name" style="background:' + modeColor(it.mode) + '">' + escHtml(it.mode) + '</span>'
+      + (s.version ? '<span class="tg-age">v' + s.version + '</span>' : '')
+      + '<span class="si-lang">' + fmtDate(it.editDate) + '</span>'
+      + '<span class="tg-age">' + rcAgeText(it.ageDays) + '</span></div>'
+      + (s.versionComment ? '<div class="tg-comment">' + escHtml(s.versionComment) + '</div>' : '')
+      + '</div>';
+  },
+
+  renderList: function() {
+    const vis = this.sorted(this.visible());
+    this.ctx.pane.querySelector('#rc-count').textContent = vis.length.toLocaleString() + ' / ' + this.inRegion().length.toLocaleString();
+    const list = this.ctx.pane.querySelector('#rc-list');
+    list.innerHTML = '';
+    const CAP = 400;
+    const self = this;
+    vis.slice(0, CAP).forEach(function(it) {
+      const s = it.stop;
+      const div = document.createElement('div');
+      div.className = 'stop-item' + (s.id === self.activeId ? ' active' : '');
+      div.dataset.id = s.id;
+      const href = CONFIG.nsrStopUrl.replace('{id}', s.id);
+      let safe = '#'; try { if (new URL(href).protocol === 'https:') safe = href; } catch (_) {}
+      div.innerHTML =
+        '<div class="si-name"><span class="tg-dot" style="background:' + modeColor(it.mode) + '"></span>' + escHtml(s.name)
+        + (it.isNew ? ' <span class="rc-new">NEW</span>' : '')
+        + '<a class="si-nsr-link" href="' + escHtml(safe) + '" target="_blank" rel="noopener">' + escHtml(CONFIG.nsrLinkLabel) + '</a></div>'
+        + '<div class="si-id">' + escHtml(s.id) + '</div>'
+        + '<div class="tg-line"><span class="tg-name" style="background:' + modeColor(it.mode) + '">' + escHtml(it.mode) + '</span>'
+        + (s.version ? '<span class="tg-age">v' + s.version + '</span>' : '')
+        + '<span class="si-lang">' + fmtDate(it.editDate) + '</span>'
+        + '<span class="tg-age">' + rcAgeText(it.ageDays) + '</span>'
+        + (s.versionComment ? '<div class="tg-comment">' + escHtml(s.versionComment) + '</div>' : '')
+        + '</div>';
+      div.querySelector('.si-nsr-link').addEventListener('click', function(e) { e.stopPropagation(); });
+      div.addEventListener('click', function() { self.select(it, false); });
+      list.appendChild(div);
+    });
+    if (vis.length > CAP) {
+      const m = document.createElement('div'); m.className = 'list-more';
+      m.textContent = 'Showing first ' + CAP + ' of ' + vis.length.toLocaleString() + ' — narrow the filter.';
+      list.appendChild(m);
+    }
+  },
+
+  renderMarkers: function() {
+    const layer = this.ctx.layer;
+    const self = this;
+    layer.eachLayer(function(l) { l.off(); }); layer.clearLayers(); this.markers.clear();
+    for (const it of this.visible()) {
+      if (!it.stop.coord) continue;
+      const isActive = it.stop.id === self.activeId;
+      const m = L.marker(it.stop.coord, { icon: self.rcIcon(it, isActive), zIndexOffset: self.rcZOffset(it, isActive) })
+        .addTo(layer)
+        .bindTooltip(it.stop.name, { direction: 'top', offset: [0, -8] })
+        .bindPopup(self.popupHtml(it));
+      m.on('click', function() { self.select(it, true); });
+      self.markers.set(it.stop.id, m);
+    }
+  },
+
+  select: function(it, fromMap) {
+    const self = this;
+    const prev = this.activeId;
+    this.activeId = it.stop.id;
+    if (prev && this.markers.has(prev)) { const p = this.items.find(function(x) { return x.stop.id === prev; }); if (p) { this.markers.get(prev).setIcon(this.rcIcon(p, false)); this.markers.get(prev).setZIndexOffset(this.rcZOffset(p, false)); } }
+    const m = this.markers.get(it.stop.id);
+    if (m) { m.setIcon(this.rcIcon(it, true)); m.setZIndexOffset(this.rcZOffset(it, true)); }
+    this.ctx.pane.querySelectorAll('.stop-item.active').forEach(function(el) { el.classList.remove('active'); });
+    const row = this.ctx.pane.querySelector('.stop-item[data-id="' + CSS.escape(it.stop.id) + '"]');
+    if (row) { row.classList.add('active'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (it.stop.coord) { if (!fromMap) this.ctx.map.map.setView(it.stop.coord, Math.max(this.ctx.map.map.getZoom(), 13), { animate: true }); if (m) m.openPopup(); }
+  },
+};
+
 // ── app.js ───────────────────────────────────────────────────────────────────
 
-const ALL_TOOLS = [overview, altnames, tags, gosp];
+const ALL_TOOLS = [overview, altnames, tags, gosp, untouched, recentchanges];
 const TOOLS = ALL_TOOLS.filter(function(t) { return CONFIG.tools ? CONFIG.tools[t.id] !== false : true; });
 
 const PARSE_OPTS = {
-  alts: !CONFIG.tools || CONFIG.tools.altnames !== false,
-  tags: !CONFIG.tools || CONFIG.tools.tags !== false,
-  gosp: !CONFIG.tools || CONFIG.tools.gosp !== false,
+  alts:    !CONFIG.tools || CONFIG.tools.altnames !== false,
+  tags:    !CONFIG.tools || CONFIG.tools.tags !== false,
+  gosp:    !CONFIG.tools || CONFIG.tools.gosp !== false,
+  history: !CONFIG.tools || CONFIG.tools.untouched !== false || CONFIG.tools.recentchanges !== false,
 };
 
 applyTheme();
