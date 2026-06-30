@@ -213,6 +213,9 @@ body {
 .b-bad { background: #f8d7da; color: #721c24; }
 .b-warn { background: #fff3cd; color: #5a4200; }
 
+/* ── Names ── */
+.nm-detail { font-size: 11px; color: #555; line-height: 1.5; margin-top: 4px; }
+
 /* ── Untouched / Recent changes ── */
 .rc-new { font-size: 10px; font-weight: 700; color: #fff; background: var(--c-danger); padding: 0 5px; border-radius: 6px; vertical-align: middle; }
 
@@ -229,10 +232,10 @@ body {
 
 <header id="topbar">
   <h1>NSR QA <span>Suite</span></h1>
-  <span id="version">v0.2</span>
+  <span id="version">v0.5</span>
   <button id="btn-load" class="tb-btn">Load NeTEx file…</button>
   <a id="btn-export" class="tb-btn secondary" target="_blank" rel="noopener">Get latest export ↧</a>
-  <input id="file-input" type="file" accept=".xml" hidden/>
+  <input id="file-input" type="file" accept=".xml,.zip" hidden/>
 
   <div class="tb-region">
     <select id="region-county" disabled><option value="">All counties</option></select>
@@ -281,12 +284,13 @@ body {
 const CONFIG = {
   exportUrl:    'https://storage.googleapis.com/marduk-production/tiamat/Current_latest.zip',
   chunkSize:    4 * 1024 * 1024,
-  nsrStopUrl:   'https://stoppested.entur.org/{id}',
+  nsrStopUrl:   'https://stoppested.entur.org/stop_place/{id}',
   nsrGroupUrl:  'https://stoppested.entur.org/group/{id}',
   nsrLinkLabel: 'NSR',
   tools: {
     overview:      true,
     altnames:      true,
+    names:         true,
     tags:          true,
     gosp:          true,
     untouched:     true,
@@ -805,9 +809,12 @@ const overview = {
       return '<div class="stat-card"><div class="stat-num">' + n.toLocaleString() + '</div><div class="stat-lbl">' + escHtml(l) + '</div></div>';
     };
     const t = CONFIG.tools || {};
+    const nNames = (t.names !== false && names._ctx)
+      ? names.items.filter(function(it) { return region.matches(it.stop); }).length : 0;
     const cards = '<div class="stat-grid">' + card(nStops, 'stops in region')
       + (t.gosp !== false ? card(nGosp, 'groups of stops') : '')
       + (t.altnames !== false ? card(nAlt, 'with alt-names') : '')
+      + (t.names !== false ? card(nNames, 'with name issues') : '')
       + (t.tags !== false ? card(nTag, 'with open tags') : '')
       + (t.untouched !== false ? card(nUntouched, 'untouched (2017)') : '')
       + (t.recentchanges !== false ? card(nRecent, 'changed ≤30d') : '')
@@ -1618,6 +1625,302 @@ const gosp = {
   },
 };
 
+// ── tools/names.js ───────────────────────────────────────────────────────────
+
+const NAME_ISSUE_META = {
+  SPECIAL:   { label: 'Special char',  color: '#e63946' },
+  DUPLICATE: { label: 'Duplicate within municipality', color: '#7209b7' },
+  ABBREV:    { label: 'Abbreviation?', color: '#fd7e14' },
+  LONGFORM:  { label: 'Use abbrev.',   color: '#e9c46a' },
+};
+
+const NAME_ALLOWED_ABBREVS = new Set(['vgs.', 'rv.', 'fv.', 'kv.']);
+// These commonly appear in official place names — flag at lower confidence
+const NAME_TITLE_ABBREVS   = new Set(['st.', 'dr.', 'prof.', 'gen.', 'kpt.', 'nr.', 'ca.', 'mfl.']);
+const NAME_LONGFORM_RES = [
+  { re: /\briksveg\b/i,    short: 'rv.' },
+  { re: /\bfylkesveg\b/i,  short: 'fv.' },
+  { re: /\bkommuneveg\b/i, short: 'kv.' },
+];
+
+function nameCheckAbbrev(name) {
+  const issues = [];
+  for (const lf of NAME_LONGFORM_RES) {
+    if (lf.re.test(name)) issues.push({ type: 'LONGFORM', detail: name.match(lf.re)[0] + ' → ' + lf.short, confidence: 0.95 });
+  }
+  const tokens = name.split(/[\s\-\/]+/);
+  for (const tok of tokens) {
+    if (!tok.endsWith('.')) continue;
+    const lc = tok.toLowerCase();
+    if (NAME_ALLOWED_ABBREVS.has(lc)) continue;
+    const body = lc.slice(0, -1);
+    if (!body) continue;
+    let conf;
+    if (NAME_TITLE_ABBREVS.has(lc)) conf = 0.50;
+    else if (body.length === 1) conf = 0.45;
+    else if (body.length >= 2 && body.length <= 5) conf = 0.85;
+    else conf = 0.70;
+    issues.push({ type: 'ABBREV', detail: '"' + tok + '"', confidence: conf });
+  }
+  return issues;
+}
+
+function nameCheckSpecial(name) {
+  const bad = [];
+  for (const ch of name) {
+    // Allowed: Unicode letters, digits, whitespace, - / ‘ ‘ ´ ‘ (apostrophe variants) .
+    if (!/[\p{L}\p{N}\s\-\/’´’’\.]/u.test(ch)) bad.push(ch);
+  }
+  const uniq = [...new Set(bad)];
+  if (!uniq.length) return null;
+  return { type: 'SPECIAL', detail: uniq.map(function(c) { return '"' + c + '"'; }).join(' '), confidence: 1.0 };
+}
+
+function normForDup(name) {
+  // Case-insensitive, whitespace-collapsed — preserves ØÅÆ so Øst ≠ Ost
+  return (name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+const names = {
+  id: 'names',
+  label: 'Names',
+  items: [],
+
+  mount: function(ctx) {
+    this.ctx = ctx;
+    this.issueF = new Set();
+    this.sort = 'name';
+    this.activeId = null;
+    this._regionKey = null;
+    this.markers = new Map();
+
+    // Build duplicate index: muniRef → normName → stopId[]
+    const dupIdx = new Map();
+    for (const s of ctx.model.stops.values()) {
+      const mr = s.muni ? s.muni.ref : '__none__';
+      const n = normForDup(s.name); if (!n) continue;
+      if (!dupIdx.has(mr)) dupIdx.set(mr, new Map());
+      const bucket = dupIdx.get(mr);
+      if (!bucket.has(n)) bucket.set(n, []);
+      bucket.get(n).push(s.id);
+    }
+
+    // NOTE: Analysis runs synchronously here — O(n) in-memory, <100ms for 19k stops.
+    // For future network-dependent analysis (e.g. geocoder per stop), make this lazy:
+    // move work to a _analyze() called from render() on first open, with chunked setTimeout.
+    this.items = [];
+    for (const s of ctx.model.stops.values()) {
+      const issues = [];
+
+      const abbrevIssues = nameCheckAbbrev(s.name);
+      for (var ai = 0; ai < abbrevIssues.length; ai++) issues.push(abbrevIssues[ai]);
+
+      const sc = nameCheckSpecial(s.name);
+      if (sc) issues.push(sc);
+
+      const mr = s.muni ? s.muni.ref : '__none__';
+      const bucket = dupIdx.get(mr);
+      if (bucket) {
+        const n = normForDup(s.name);
+        const peers = (bucket.get(n) || []).filter(function(id) {
+          if (id === s.id) return false;
+          const other = ctx.model.stops.get(id);
+          if (!other) return false;
+          // Allow: siblings in same multimodal cluster, or direct parent-child
+          if (s.parentRef && s.parentRef === other.parentRef) return false;
+          if (s.parentRef === other.id || other.parentRef === s.id) return false;
+          return true;
+        });
+        if (peers.length > 0) {
+          const peerNames = peers.slice(0, 3).map(function(id) {
+            const o = ctx.model.stops.get(id); return o ? o.name : id;
+          });
+          issues.push({
+            type: 'DUPLICATE',
+            detail: 'Also: ' + peerNames.join(', ') + (peers.length > 3 ? ' +' + (peers.length - 3) + ' more' : ''),
+            confidence: 1.0,
+            peers: peers,
+          });
+        }
+      }
+
+      if (!issues.length) continue;
+      const maxConf = issues.reduce(function(m, i) { return Math.max(m, i.confidence || 0); }, 0);
+      const worstColor = issues.find(function(i) { return i.type === 'SPECIAL'; })   ? NAME_ISSUE_META.SPECIAL.color
+                       : issues.find(function(i) { return i.type === 'DUPLICATE'; }) ? NAME_ISSUE_META.DUPLICATE.color
+                       : issues.find(function(i) { return i.type === 'ABBREV'; })    ? NAME_ISSUE_META.ABBREV.color
+                       : NAME_ISSUE_META.LONGFORM.color;
+      this.items.push({ stop: s, issues: issues, maxConf: maxConf, worstColor: worstColor, search: (s.name + ' ' + s.id).toLowerCase() });
+    }
+
+    ctx.pane.innerHTML =
+      '<div class="pane-top">'
+      + '<div class="pane-title"><span>Name issues</span><span class="pane-count" id="nm-count">—</span></div>'
+      + '<div id="nm-stats"></div>'
+      + '<div class="sum-label">By issue type</div><div class="sum-row" id="nm-issues"></div>'
+      + '<input id="nm-search" type="text" placeholder="Filter by name or ID…" autocomplete="off"/>'
+      + '<label class="ctl" style="margin-top:7px">Sort<select id="nm-sort">'
+      + '<option value="name">Name A–Z</option>'
+      + '<option value="conf">Confidence (high first)</option>'
+      + '</select></label></div>'
+      + '<div class="pane-list" id="nm-list"></div>';
+
+    const self = this;
+    ctx.pane.querySelector('#nm-search').addEventListener('input', debounce(function() { self.render(); }, 150));
+    ctx.pane.querySelector('#nm-sort').addEventListener('change', function(e) { self.sort = e.target.value; self.renderList(); });
+    ctx.pane.querySelector('#nm-issues').addEventListener('click', function(e) {
+      const pill = e.target.closest('.sum-pill'); if (!pill) return;
+      const v = pill.dataset.val;
+      if (self.issueF.has(v)) self.issueF.delete(v); else self.issueF.add(v);
+      self.render();
+    });
+  },
+
+  inRegion: function() {
+    const self = this;
+    return this.items.filter(function(it) { return self.ctx.region.matches(it.stop); });
+  },
+
+  visible: function() {
+    const self = this;
+    const q = this.ctx.pane.querySelector('#nm-search').value.toLowerCase();
+    return this.inRegion().filter(function(it) {
+      if (q && !it.search.includes(q)) return false;
+      if (self.issueF.size && !it.issues.some(function(iss) { return self.issueF.has(iss.type); })) return false;
+      return true;
+    });
+  },
+
+  render: function() {
+    this.renderStats();
+    this.renderList();
+    this.renderMarkers();
+    const key = JSON.stringify(this.ctx.region.get());
+    if (key !== this._regionKey) {
+      this._regionKey = key;
+      const pts = this.visible().map(function(it) { return it.stop.coord; }).filter(Boolean);
+      if (pts.length) this.ctx.map.fit(pts);
+    }
+  },
+
+  renderStats: function() {
+    const region = this.inRegion();
+    const vis = this.visible();
+    const typeCounts = {};
+    for (const k of Object.keys(NAME_ISSUE_META)) typeCounts[k] = 0;
+    for (const it of region) {
+      const seen = new Set();
+      for (const iss of it.issues) { if (!seen.has(iss.type)) { seen.add(iss.type); typeCounts[iss.type]++; } }
+    }
+    this.ctx.pane.querySelector('#nm-stats').innerHTML =
+      '<div class="stat-grid compact">'
+      + '<div class="stat-card"><div class="stat-num">' + region.length.toLocaleString() + '</div><div class="stat-lbl">stops with issues</div></div>'
+      + '<div class="stat-card"><div class="stat-num">' + vis.length.toLocaleString() + '</div><div class="stat-lbl">visible</div></div>'
+      + '</div>';
+    const self = this;
+    const pills = Object.keys(NAME_ISSUE_META).filter(function(k) { return typeCounts[k] > 0; }).map(function(k) {
+      const m = NAME_ISSUE_META[k];
+      return '<span class="sum-pill' + (self.issueF.has(k) ? ' active' : '') + '" data-val="' + k + '">'
+        + '<span class="sum-swatch" style="background:' + m.color + '"></span>' + escHtml(m.label) + ' ' + typeCounts[k].toLocaleString() + '</span>';
+    }).join('');
+    this.ctx.pane.querySelector('#nm-issues').innerHTML = pills || '<span class="muted">none</span>';
+    this.ctx.pane.querySelector('#nm-count').textContent = vis.length.toLocaleString() + ' / ' + region.length.toLocaleString();
+  },
+
+  sorted: function(items) {
+    const a = items.slice();
+    if (this.sort === 'conf') a.sort(function(x, y) { return y.maxConf - x.maxConf; });
+    else a.sort(function(x, y) { return x.stop.name.localeCompare(y.stop.name, 'no'); });
+    return a;
+  },
+
+  issueLines: function(issues) {
+    return issues.map(function(iss) {
+      const m = NAME_ISSUE_META[iss.type];
+      let line = '<span style="color:' + m.color + ';font-weight:600">' + escHtml(m.label) + ':</span> ' + escHtml(iss.detail);
+      if (iss.type === 'ABBREV') line += ' <span style="color:#aaa;font-size:10px">' + Math.round(iss.confidence * 100) + '%</span>';
+      return line;
+    }).join('<br>');
+  },
+
+  renderList: function() {
+    const vis = this.sorted(this.visible());
+    this.ctx.pane.querySelector('#nm-count').textContent = vis.length.toLocaleString() + ' / ' + this.inRegion().length.toLocaleString();
+    const list = this.ctx.pane.querySelector('#nm-list');
+    list.innerHTML = '';
+    const CAP = 400;
+    const self = this;
+    vis.slice(0, CAP).forEach(function(it) {
+      const s = it.stop;
+      const div = document.createElement('div');
+      div.className = 'stop-item' + (s.id === self.activeId ? ' active' : '');
+      div.dataset.id = s.id;
+      const href = CONFIG.nsrStopUrl.replace('{id}', s.id);
+      let safe = '#'; try { if (new URL(href).protocol === 'https:') safe = href; } catch (_) {}
+      const seen = new Set();
+      const badges = it.issues.filter(function(iss) {
+        if (seen.has(iss.type)) return false; seen.add(iss.type); return true;
+      }).map(function(iss) {
+        return '<span class="tg-name" style="background:' + NAME_ISSUE_META[iss.type].color + '">' + escHtml(NAME_ISSUE_META[iss.type].label) + '</span>';
+      }).join('');
+      div.innerHTML =
+        '<div class="si-name"><span class="tg-dot" style="background:' + it.worstColor + '"></span>' + escHtml(s.name)
+        + '<a class="si-nsr-link" href="' + escHtml(safe) + '" target="_blank" rel="noopener">' + escHtml(CONFIG.nsrLinkLabel) + '</a></div>'
+        + '<div class="si-id">' + escHtml(s.id) + '</div>'
+        + '<div class="tg-line">' + badges + '</div>'
+        + '<div class="nm-detail">' + self.issueLines(it.issues) + '</div>';
+      div.querySelector('.si-nsr-link').addEventListener('click', function(e) { e.stopPropagation(); });
+      div.addEventListener('click', function() { self.select(it, false); });
+      list.appendChild(div);
+    });
+    if (vis.length > CAP) {
+      const m = document.createElement('div'); m.className = 'list-more';
+      m.textContent = 'Showing first ' + CAP + ' of ' + vis.length.toLocaleString() + ' — narrow the filter.';
+      list.appendChild(m);
+    }
+  },
+
+  nmIcon: function(it, active) {
+    const r = active ? 11 : 8, sw = active ? 2.5 : 1.5, size = r * 2 + sw * 2 + 4, c = size / 2;
+    return L.divIcon({
+      className: '', iconSize: [size, size], iconAnchor: [c, c],
+      html: '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '"><circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="' + it.worstColor + '" stroke="' + (active ? '#1a1a2e' : 'rgba(0,0,0,0.35)') + '" stroke-width="' + sw + '"/></svg>',
+    });
+  },
+
+  renderMarkers: function() {
+    const layer = this.ctx.layer;
+    const self = this;
+    layer.eachLayer(function(l) { l.off(); }); layer.clearLayers(); this.markers.clear();
+    for (const it of this.visible()) {
+      if (!it.stop.coord) continue;
+      const m = L.marker(it.stop.coord, { icon: self.nmIcon(it, it.stop.id === self.activeId) })
+        .addTo(layer)
+        .bindTooltip(it.stop.name, { direction: 'top', offset: [0, -8] });
+      m.on('click', function() { self.select(it, true); });
+      self.markers.set(it.stop.id, m);
+    }
+  },
+
+  select: function(it, fromMap) {
+    const prev = this.activeId;
+    this.activeId = it.stop.id;
+    if (prev && this.markers.has(prev)) {
+      const p = this.items.find(function(x) { return x.stop.id === prev; });
+      if (p) this.markers.get(prev).setIcon(this.nmIcon(p, false));
+    }
+    const m = this.markers.get(it.stop.id);
+    if (m) { m.setIcon(this.nmIcon(it, true)); m.setZIndexOffset(1000); }
+    this.ctx.pane.querySelectorAll('.stop-item.active').forEach(function(el) { el.classList.remove('active'); });
+    const row = this.ctx.pane.querySelector('.stop-item[data-id="' + CSS.escape(it.stop.id) + '"]');
+    if (row) { row.classList.add('active'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (it.stop.coord) {
+      if (!fromMap) this.ctx.map.map.setView(it.stop.coord, Math.max(this.ctx.map.map.getZoom(), 13), { animate: true });
+      if (m) m.openPopup();
+    }
+  },
+};
+
 // ── tools/untouched.js ───────────────────────────────────────────────────────
 
 const untouched = {
@@ -2084,7 +2387,7 @@ const recentchanges = {
 
 // ── app.js ───────────────────────────────────────────────────────────────────
 
-const ALL_TOOLS = [overview, altnames, tags, gosp, untouched, recentchanges];
+const ALL_TOOLS = [overview, altnames, names, tags, gosp, untouched, recentchanges];
 const TOOLS = ALL_TOOLS.filter(function(t) { return CONFIG.tools ? CONFIG.tools[t.id] !== false : true; });
 
 const PARSE_OPTS = {
@@ -2120,20 +2423,114 @@ $('file-input').addEventListener('change', function(e) {
   e.target.value = '';
 });
 
+// Extracts the first .xml entry from a ZIP file using native DecompressionStream.
+async function unzipToXml(file) {
+  const buf = await file.arrayBuffer();
+  const view = new DataView(buf);
+  const len = buf.byteLength;
+
+  // Find End-of-Central-Directory record (scan backwards; max ZIP comment = 65535 bytes)
+  let eocd = -1;
+  const searchStart = Math.max(0, len - 65558);
+  for (let i = len - 22; i >= searchStart; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid ZIP file');
+
+  const cdCount  = view.getUint16(eocd + 10, true);
+  const cdOffset = view.getUint32(eocd + 16, true);
+  if (cdOffset === 0xffffffff || cdCount === 0xffff) {
+    throw new Error('ZIP64 format is not supported — please extract the XML file manually');
+  }
+
+  // Walk central directory to find first .xml entry
+  let off = cdOffset;
+  for (let i = 0; i < cdCount; i++) {
+    if (view.getUint32(off, true) !== 0x02014b50) throw new Error('Invalid ZIP central directory');
+    const method     = view.getUint16(off + 10, true);
+    const compSize   = view.getUint32(off + 20, true);
+    const fnLen      = view.getUint16(off + 28, true);
+    const extraLen   = view.getUint16(off + 30, true);
+    const commentLen = view.getUint16(off + 32, true);
+    const localOff   = view.getUint32(off + 42, true);
+    const fname      = new TextDecoder().decode(new Uint8Array(buf, off + 46, fnLen));
+    off += 46 + fnLen + extraLen + commentLen;
+    if (!fname.toLowerCase().endsWith('.xml')) continue;
+
+    // Locate compressed data via local file header
+    if (view.getUint32(localOff, true) !== 0x04034b50) throw new Error('Invalid local file header for ' + fname);
+    const lFnLen    = view.getUint16(localOff + 26, true);
+    const lExtraLen = view.getUint16(localOff + 28, true);
+    const dataOff   = localOff + 30 + lFnLen + lExtraLen;
+    const compressed = new Uint8Array(buf, dataOff, compSize);
+
+    if (method === 0) {
+      return new File([compressed], fname, { type: 'application/xml' });
+    }
+    if (method === 8) {
+      if (typeof DecompressionStream === 'undefined') {
+        throw new Error('Your browser does not support DecompressionStream (Chrome 80+, Firefox 113+, Safari 16.4+ required)');
+      }
+      const ds = new DecompressionStream('deflate-raw');
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      writer.write(compressed);
+      writer.close();
+      const chunks = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      return new File([new Blob(chunks)], fname, { type: 'application/xml' });
+    }
+    throw new Error('Unsupported ZIP compression method ' + method + ' for ' + fname + ' — please extract the XML manually');
+  }
+  throw new Error('No XML file found in the ZIP archive');
+}
+
+// Simple styled confirm dialog (used for the Untouched pin-count warning).
+function showConfirm(title, msg, onOk) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:3000';
+  overlay.innerHTML =
+    '<div style="background:#fff;border-radius:10px;padding:28px 32px;min-width:320px;max-width:440px;box-shadow:0 8px 36px rgba(0,0,0,0.3)">'
+    + '<div style="font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:8px">' + escHtml(title) + '</div>'
+    + '<div style="font-size:13px;color:#444;line-height:1.65;margin-bottom:20px">' + msg + '</div>'
+    + '<div style="display:flex;gap:10px;justify-content:flex-end">'
+    + '<button id="dlg-cancel" style="padding:8px 18px;border:1px solid #d0d0d0;border-radius:5px;background:#fff;cursor:pointer;font-size:13px;color:#444">Pick a region first</button>'
+    + '<button id="dlg-ok" style="padding:8px 18px;background:var(--c-primary);color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600">Load anyway</button>'
+    + '</div></div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('#dlg-cancel').addEventListener('click', function() { document.body.removeChild(overlay); });
+  overlay.querySelector('#dlg-ok').addEventListener('click', function() { document.body.removeChild(overlay); onOk(); });
+}
+
 let loading = false;
 async function loadFile(file) {
   if (loading) return;
   loading = true;
+  // Clear previous data immediately so stale pins/tabs don't linger
+  if (activeTab) { mapApi.map.removeLayer(activeTab._ctx.layer); activeTab = null; }
+  $('tabs').innerHTML = '';
+  $('sidebar').innerHTML = '';
+  model = null; regions = null;
   showOverlay(true);
   $('btn-load').disabled = true;
-  setStatus('Reading ' + file.name + '…');
   try {
-    model = await parseNetex(file, function(frac, m) { setProgress(frac, m.stops.size); }, PARSE_OPTS);
+    let xmlFile = file;
+    if (file.name.toLowerCase().endsWith('.zip')) {
+      setStatus('Extracting XML from ZIP…');
+      xmlFile = await unzipToXml(file);
+    }
+    setStatus('Reading ' + xmlFile.name + '…');
+    model = await parseNetex(xmlFile, function(frac, m) { setProgress(frac, m.stops.size); }, PARSE_OPTS);
     regions = resolveRegions(model);
-    initData(file.name);
+    initData(xmlFile.name);
   } catch (err) {
     console.error('Load error:', err);
-    setStatus('Failed to read the file — see console for details.');
+    setStatus('Error: ' + (err && err.message ? err.message : 'Failed to read the file — see console for details.'));
+    $('empty-hint').classList.remove('hidden');
   } finally {
     loading = false;
     showOverlay(false);
@@ -2171,7 +2568,22 @@ function initData(fileName) {
     tab.className = 'tab';
     tab.textContent = tool.label;
     tab.dataset.tool = tool.id;
-    tab.addEventListener('click', function() { activate(tool); });
+    tab.addEventListener('click', (function(t) {
+      return function() {
+        if (t.id === 'untouched' && t.items) {
+          const cnt = t.items.filter(function(it) { return filter.matches(it.stop); }).length;
+          if (cnt > 5000) {
+            showConfirm(
+              'That’s a lot of pins',
+              'There are <strong>' + cnt.toLocaleString() + '</strong> untouched stops in the current view — rendering all their map pins may be slow on older hardware.<br><br>Consider picking a county or municipality to narrow the selection first.',
+              function() { activate(t); }
+            );
+            return;
+          }
+        }
+        activate(t);
+      };
+    })(tool));
     tabsEl.appendChild(tab);
 
     tool._ctx = {
